@@ -1,0 +1,15 @@
+# Keep line endings stable across platforms: the repo stores LF, and the
+# working tree keeps LF too (avoids CRLF drift breaking scripts on other
+# machines / in CI).
+* text=auto eol=lf
+
+*.py   text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.sh   text eol=lf
+
+# Binary-ish
+*.png binary
+*.jpg binary
+*.gif binary

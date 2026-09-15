@@ -1,0 +1,14 @@
+# Python bytecode / caches — the gate stays dependency-free, keep the tree clean
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Per-run review artifacts (evidence files, reviewer scratch space)
+.review-evidence/
+.tmp-review/
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
