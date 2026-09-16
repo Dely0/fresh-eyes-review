@@ -167,6 +167,63 @@ function Get-ShortRev {
     finally { $ErrorActionPreference = $previous }
 }
 
+# GitHub connectivity from this network is intermittent: measured 1 failure in 5
+# back-to-back `git ls-remote` calls, each failing with "Failed to connect to
+# github.com port 443 after 21s". Treating the first failure as fatal makes the
+# scheduled task report FAIL for what is really a blip - and that noise buries
+# the failures that ARE real.
+#
+# Retries only help for transient errors. Authentication and missing-repo errors
+# are permanent, so they fail on the first attempt instead of stalling.
+function Test-TransientGitError {
+    param([string] $Message)
+    if (-not $Message) { return $true }   # unknown: give it one more chance
+    $permanent = 'Authentication failed', 'could not read Username',
+                 'Permission denied', 'Repository not found', 'not found',
+                 'terminal prompts disabled'
+    foreach ($marker in $permanent) {
+        if ($Message -like "*$marker*") { return $false }
+    }
+    return $true
+}
+
+function Invoke-GitWithRetry {
+    param(
+        [Parameter(Mandatory)][string] $Context,
+        [Parameter(Mandatory)][string[]] $Arguments,
+        [int] $Attempts = 3,
+        [int] $DelaySeconds = 3
+    )
+    $lastMessage = ''
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $previous = $ErrorActionPreference
+        $output = $null
+        try {
+            $ErrorActionPreference = 'Continue'
+            $output = & git @Arguments 2>&1
+            $code = $LASTEXITCODE
+        }
+        finally { $ErrorActionPreference = $previous }
+
+        if ($code -eq 0) {
+            if ($attempt -gt 1) {
+                Write-Output "  [$Context] succeeded on attempt $attempt/$Attempts (previous attempts failed transiently)"
+            }
+            return 0
+        }
+
+        $lastMessage = (($output | Out-String).Trim() -split "`n" | Select-Object -First 1)
+        if (-not (Test-TransientGitError -Message $lastMessage)) {
+            throw "$Context failed with a permanent error (exit $code): $lastMessage"
+        }
+        if ($attempt -lt $Attempts) {
+            Write-Output "  [$Context] attempt $attempt/$Attempts failed (transient): $lastMessage"
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+    throw "$Context failed after $Attempts attempts (exit $code): $lastMessage"
+}
+
 # Single instance: a slow pull must not overlap the next scheduled tick.
 $mutex = New-Object System.Threading.Mutex($false, 'Local\fresh-eyes-review-sync')
 $held = $false
@@ -222,10 +279,8 @@ try {
             $pullState = "skipped (dirty tree: $($dirty.Count) path(s))"
         }
         else {
-            $code = Invoke-Native 'git' @('-C', $RepoPath, 'fetch', '--prune', 'origin')
-            if ($code -ne 0) { throw "git fetch failed (exit $code)" }
-            $code = Invoke-Native 'git' @('-C', $RepoPath, 'pull', '--ff-only')
-            if ($code -ne 0) { throw "git pull --ff-only failed (exit $code)" }
+            Invoke-GitWithRetry -Context 'git fetch' -Arguments @('-C', $RepoPath, 'fetch', '--prune', 'origin') | Out-Null
+            Invoke-GitWithRetry -Context 'git pull' -Arguments @('-C', $RepoPath, 'pull', '--ff-only') | Out-Null
             $revAfter = Get-ShortRev $RepoPath
             $pullState = if ($revBefore -eq $revAfter) { 'up-to-date' } else { "updated $revBefore -> $revAfter" }
         }
