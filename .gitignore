@@ -13,3 +13,6 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Auto-sync log (one line per run, machine-local)
+scripts/sync-fresh-eyes-review.log

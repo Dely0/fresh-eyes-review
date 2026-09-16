@@ -238,6 +238,42 @@ checked=1 same=0 attached=0 calls=0
 
 门禁接受几种等价写法：`- 位置：…`、`- **位置**：…`、`location: …`；值可以写在标签同一行，也可以写在下面几行（多行命令、围栏里的真实输出都算）。`反向前置` 的等价标签还包括 `前置复现`、`pre-fix`、`red`。
 
+### 让本机自动跟住 GitHub
+
+DSH 通过扫描 `<DSH_HOME>/skills` **热发现**技能，所以「安装」这个技能就是把目录放进去。手工放的问题是**它会悄悄落后**：没有任何东西会告诉你本机那份已经过期了。
+
+`scripts/` 里两个脚本把这条链路补上（首次 clone，之后 `git pull --ff-only`）：
+
+```powershell
+# 一次性安装：立刻同步一次 → 注册计划任务 → 触发并确认写出新日志行
+powershell -ExecutionPolicy Bypass -File scripts/setup-autosync.ps1
+powershell -ExecutionPolicy Bypass -File scripts/setup-autosync.ps1 -Uninstall   # 移除
+```
+
+```powershell
+# 只想手工同步一次（不注册任何任务）
+powershell -NoProfile -File scripts/sync-skill.ps1
+powershell -NoProfile -File scripts/sync-skill.ps1 -DryRun     # 先看会改什么
+powershell -NoProfile -File scripts/sync-skill.ps1 -NoPull     # 离线：只用现有克隆重装
+```
+
+每次同步做四件事，任何一步失败就退 1 且**不落地**：
+
+1. 取单实例锁（慢的一次拉取不会和下个 tick 重叠）；
+2. `git pull --ff-only`（**只在没有已跟踪文件改动时**才拉 —— 绝不吞掉在编内容；未跟踪文件不阻止拉取）；
+3. 把 `fresh-eyes-review/` 镜像到 `<DSH_HOME>/skills/`，**逐文件 SHA256 校验**，并删掉上游已移除的文件（只保留 `__pycache__` 之外的真实差异）；
+4. **拿装好的那份跑它自己的回归套件** —— 一次坏拉取不会静默落地。
+
+状态是 `<repo>/scripts/sync-fresh-eyes-review.log` 里每次运行一行。
+
+#### 三个会让人白查半天的坑（都踩过）
+
+- **计划任务不继承 `DSH_HOME`。** 这个变量由 DSH 启动器只在自己的进程树里设置，Task Scheduler 拉起的进程取不到。脚本里的解析顺序是 **显式参数 → `$DSH_HOME` → `~/.dsh`**，并且会把 `-DshHome` 显式写进任务命令。没有这个回退，脚本会在写出第一行日志**之前**就死掉 —— 看起来就像「任务根本没跑」（`Last Result: 1` + 日志无新增行）。
+- **PowerShell 5.1 会把原生命令的 stderr 变成终止性错误。** `git fetch` 会往 stderr 打进度和 `From <url>`；在 `$ErrorActionPreference = 'Stop'` 下，`& git fetch 2>&1 | Out-Null` 不只是失败，它会在 fetch 那一行**中止整个脚本**，catch 里报出来的还是一句误导的 `From <url>`。所以脚本用 `Invoke-Native` 在调用前后临时放宽该偏好，只按退出码分支。
+- **脚本必须保持 ASCII、无 BOM、LF。** Windows PowerShell 5.1 会把无 BOM 的脚本按 ANSI 解码 —— 中文注释会变成乱码并**在解析期**就报错（连接日志都建不起来）。所以这两个脚本刻意不含任何非 ASCII 字符（有 `mutation_check.py` 之外的自检脚本也一样）。
+
+> 这套做法复用自公司技能仓库 `LS-Skills` 的 `scripts/sync-skills-auto.ps1` / `setup-autosync.ps1`（同事实现，含上面三个坑的原始记录）。差别只有两点：上游是 GitHub 而不是内网 Gitea，且本仓库是「一个仓库一个技能」（技能在 `<repo>/fresh-eyes-review/`），所以不需要它那套多技能逐目录同步。
+
 ### 更省的一档
 
 不开审查者也行：只保留收口那一步——每处改动配一个能变红的断言，外加问自己一句「**我怎么知道它真的在跑？**」。有实证支持这一档：抬高上限的是可执行的判据，第二个模型主要是帮你找到"该加哪条判据"。
