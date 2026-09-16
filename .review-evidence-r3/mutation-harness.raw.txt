@@ -1,0 +1,33 @@
+BASELINE exit=0 reds=[] 共 70 条断言，变红 0 条。
+
+MUTATION M1_drop_falsify_requires_handoff -> suite exit=0
+  suite summary: 共 70 条断言，变红 0 条。
+  RED assertions: NONE (mutation survives)
+
+MUTATION M2_drop_falsify_section_check -> suite exit=0
+  suite summary: 共 70 条断言，变红 0 条。
+  RED assertions: NONE (mutation survives)
+
+MUTATION M3_drop_falsify_marker_check -> suite exit=0
+  suite summary: 共 70 条断言，变红 0 条。
+  RED assertions: NONE (mutation survives)
+
+MUTATION M4_drop_unresolved_section -> suite exit=0
+  suite summary: 共 70 条断言，变红 0 条。
+  RED assertions: NONE (mutation survives)
+
+MUTATION M5_drop_handoff_section_presence -> suite exit=0
+  suite summary: 共 70 条断言，变红 0 条。
+  RED assertions: NONE (mutation survives)
+
+MUTATION M6_drop_handoff_provenance_check -> suite exit=1
+  suite summary: 共 70 条断言，变红 1 条。
+  RED assertions: ['handoff_missing_provenance']
+
+MUTATION M7_drop_handoff_entries_check -> suite exit=1
+  suite summary: 共 70 条断言，变红 1 条。
+  RED assertions: ['handoff_no_tradeoffs']
+
+MUTATION M8_weaken_red_len -> suite exit=0
+  suite summary: 共 70 条断言，变红 0 条。
+  RED assertions: NONE (mutation survives)

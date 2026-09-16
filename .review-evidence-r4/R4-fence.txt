@@ -1,0 +1,22 @@
+[exit code: 0]
+
+### handoff_sections_only_in_fence
+$ python <gate> --strict --handoff .review-handoff.md <report.md>
+gate exit = 1
+--- stdout ---
+[WARN] 交接文档：取舍条目没有可辨认的出处（要求「依据：」后紧接 HumanDecision / RecordedDecision / OrchestratorClaim）：- <取舍> | 依据：<HumanDecision / RecordedDecision / 
+[ OK ] F1 F1 兜底报告 · 严重度：高
+
+共 1 条发现：1 条合格，0 条不合格，另有 1 条提醒。
+--strict：还有 1 条提醒未清，本次按不合格处理。
+--- stderr ---
+--- end ---
+
+### falsify_verdicts_only_in_fence
+$ python <gate> --falsify --handoff .review-handoff.md --strict <report.md>
+gate exit = 0
+--- stdout ---
+对抗性复审通过 —— 分段齐全，每条判定都标了出处。
+--- stderr ---
+--- end ---
+

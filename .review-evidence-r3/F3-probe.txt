@@ -1,0 +1,5 @@
+[exit code: 1]
+mutation: --falsify no longer requires --handoff
+suite exit=0 red=[]
+F3_RULE_UNPINNED: 断言 falsify_needs_handoff 仍绿（它走的是交接文档不存在的分叉），整条 --falsify 规则可以整条删掉而套件全绿
+

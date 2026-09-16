@@ -1,0 +1,1569 @@
+diff --git a/README.md b/README.md
+index c902ea4..28b68f6 100644
+--- a/README.md
++++ b/README.md
+@@ -61,7 +61,13 @@
+ 
+ > **有人把"发现必须带证据"写成了规范或提示词，但没有一个开源工具去解析一份审查报告、按条目断言它带可执行命令与实测输出，并以退出码否决不合规的报告。**
+ 
+-这正是 `check_review_report.py` 做的事——它不审查代码，它**审查审查报告**。而且它不止于"字段在不在"：`--replay` 档会**重跑报告里的复现命令，并与审查者落盘保存的原始输出做 diff**。
++这正是 `check_review_report.py` 做的事——它不审查代码，它**审查审查报告**。而且它不止于"字段在不在"，有三层：
++
++1. **默认档**：字段带齐了没有、证据文件在不在、首行是不是退出码、**位置指向的文件真的存在吗**（解析 `路径:行号`，核实文件与行号范围）。
++2. **`--pre-fix` 档**（动手改之前跑）：重跑每条的**反向前置**命令，**要求它仍然失败**。跑绿了就说明缺陷复现不了——先别修。
++3. **`--replay` 档**（改完之后跑）：**重跑报告里的复现命令，并与审查者落盘保存的原始输出做 diff**。
++
++第 2 层是治「命令没有证明力」的：重放只能证明"命令跑过、输出对得上"，证明不了这条命令与结论有关。要求一个「在缺陷代码上会失败」的命令、且其证据退出码必须非零，就把`assert True` 这类恒真证据变成了**硬失败**。
+ 
+ 为什么需要重放这一层，见下一节。
+ 
+@@ -76,7 +82,22 @@
+ 本项目的 `--replay` 就是照 `quality-playbook` 的思路，把这个缺口往"按条目重放"的方向推了一步。但要说清楚：
+ 
+ - **它仍然不是证明。** `--replay` 能发现"命令跑不出报告里那个输出"，但发现不了"命令本身是精心挑选来避重就轻的"。它是筛子，不是证明器。
+-- **它是本仓库里最不成熟的一块。** 整套门禁现在有 36 条断言钉着，其中 9 条专门覆盖 `--replay`（输出不一致、退出码不一致、命中拒绝表、超时、易变内容归一化……）；但真正的难点在断言之外——依赖版本、并发顺序、环境差异造成的"重放不上"，目前只能靠人判断。
++- **它是本仓库里最不成熟的一块。** 整套门禁现在有 42 条断言钉着，其中 8 条专门覆盖 `--replay`（输出不一致、退出码不一致、命中拒绝表、超时、易变内容归一化……）；但真正的难点在断言之外——依赖版本、并发顺序、环境差异造成的"重放不上"，目前只能靠人判断。**而且「假失败率」这个数字目前是空的**：归一化只折叠十类已知易变 token，不在表里的易变内容会让重放判"不一致"。保守是故意的，但如果假失败比例太高，人就会干脆不用 `--replay`。这个数字没有被量过之前，不要声称这一档已经"可用"。
++- **它验不了「命令有没有证明力」。** 一次主动攻击实测，五种攻击姿态 × 四个档位的防线：
++
++  | 攻击姿态 | 默认 | `--strict` | `--replay` | `--pre-fix` |
++  |---|---|---|---|---|
++  | 位置指向不存在的文件/行号 | ⚠️ | ✅ | ✅ | ⚠️ |
++  | 跑一条与发现无关的命令 | ⚠️ | ⚠️ | ✅ | ⚠️ |
++  | 证据只留输出的一行（选择性摘录） | ⚠️ | ⚠️ | ✅ | ⚠️ |
++  | 恒真命令 + 证据记成 exit 0 | ✅ | ✅ | ✅ | ✅ |
++  | 恒真命令 + 把前置证据伪造成 exit 1 | ⚠️ | ⚠️ | ⚠️ | ✅ |
++
++  位置可核实性（解析 `路径:行号` → 文件存在、行号在范围内）与**反向前置**（要求给出「在缺陷代码上会失败」的命令，且其证据退出码必须非零）是后来补上的两层；`--replay` 还会重跑前置命令并要求它**已转绿**，所以它能拦下「无关命令」。
++
++  **两个至今未解决的缺口，都必须由人判断：**
++  1. **「碰巧失败的无关命令」在改前改后都失败时，只有 `--replay` 会因为「前置没转绿」拦下它**；作者真把缺陷修好、只是命令选得无关时，仍要靠人判断那个失败是否指向结论。
++  2. **伪造前置证据退出码、命令却是恒真的，只有 `--pre-fix` 抓得住**（只有它会在改之前真的重跑）。所以 **`--pre-fix` 不是可选项**：只跑 `--replay` 就等于放弃了「先红」那一半。
+ - 如果你想看这个方向上做得更彻底的，去看 `quality-playbook` 与 `qwen-code` 的 autofix；它们分别在"防伪造"和"提交前强制"上走得比我远。
+ 
+ ---
+@@ -138,25 +159,51 @@ fresh-eyes-review/                 ← 仓库根
+ 3. **过门禁**——把报告存成文件，跑：
+ 
+ ```bash
+-# 默认档：校验「位置 / 复现 / 证据」是否带齐，证据文件在不在、首行是不是 [exit code: N]
++# 默认档：校验「位置 / 复现 / 证据 / 反向前置」是否带齐，证据文件在不在、
++#         首行是不是 [exit code: N]，反向前置证据的退出码是不是非零，位置真不真
+ python fresh-eyes-review/scripts/check_review_report.py report.md
+ 
+-# 重放档：额外重跑报告里的复现命令，与落盘证据归一化后逐行 diff
++# 前置档（动手改之前跑）：重跑「反向前置」命令，要求它现在仍然失败
++python fresh-eyes-review/scripts/check_review_report.py --pre-fix report.md
++
++# 重放档（改完之后跑）：重跑复现命令，与落盘证据归一化后逐行 diff
+ python fresh-eyes-review/scripts/check_review_report.py --replay report.md
+ 
+-# 可选参数：--workdir DIR（默认报告所在目录）、--timeout SEC（默认 120）、--strict（提醒也计为不合格）
++# 可选参数：--workdir DIR（默认报告所在目录）、--timeout SEC（默认 120）、
++#          --strict（提醒也计为不合格：缺严重度 / 位置不存在 / 缺反向前置 …）
++# --pre-fix 与 --replay 互斥：一个验「改之前必须失败」，一个验「改之后能重现」
+ ```
+ 
+ **退出码**
+ 
+ | 码 | 含义 | 你该做什么 |
+ |---|---|---|
+-| `0` | 每条发现都带齐证据（重放档下且全部重放一致） | **仍然要逐条照抄核实**——格式达标不等于内容为真 |
+-| `1` | 有条目缺证据；或重放档下有条目未能重放 / 与落盘证据不一致 | 缺证据的退回或丢弃，**不要凭它改代码**；不一致的**升级给人判断**（见第 5 节） |
+-| `2` | 报告读不了（缺文件、未知参数、编码解不开） | 这是读取错误，不是"报告不合格"，两件事不能混 |
++| `0` | 每条发现都带齐证据（`--pre-fix` 下前置命令仍然失败；`--replay` 下全部重放一致且前置已转绿） | **仍然要逐条照抄核实**——格式达标不等于内容为真 |
++| `1` | 有条目缺证据；**或反向前置证据记成 exit 0**（命令通过了＝缺陷不成立）；或前置/重放未按要求表现 / 被拒绝表拦下；或交接文档与对抗性复审报告不合格 | 缺证据的退回或丢弃，**不要凭它改代码**；前置记成 0 的直接退回；不一致的**升级给人判断**（见第 5 节） |
++| `2` | 报告读不了（缺文件、未知参数、编码解不开），或 `--pre-fix` 与 `--replay` 同时给出，或 `--falsify` 没配 `--handoff` | 这是读取错误，不是"报告不合格"，两件事不能混 |
+ 
+ 4. **分流 + 收口**——缺证据的条目重开一个空上下文审查者补证据（前台起的子 agent 结束后没有可寻址的 id，叫不回同一个）；每条修完补一个断言，**把 bug 装回去，测试必须变红**。红不了就继续改断言，不是继续改代码。
+ 
++### 第二轮回审（可选，价值最高的一轮）
++
++首轮问的是「这段改动有什么问题」。第二轮问的是完全不同的问题：**「上一轮那份报告，哪一条是错的？」**
++
++理由是很实际的失败代价：一次自信的**错误**发现，下游代价最大 —— 它会让人去改本来没错的代码。而首轮的审查者不会知道自己报错了，只有第二个审查者能把它按下去。
++
++两件事支撑这一轮：
++
++- **`references/handoff-template.md`** —— 交接文档（`<工作目录>/.review-handoff.md`）。审查者是空上下文的，它不知道哪些是**已经定死的取舍**，会把它们当缺陷报上来、还认真复现一遍。这份文档把那些取舍写清楚，**同时**给出上一轮已驳回的发现及其理由。
++  它也是这套流程里最危险的一份文件，因为**写它的人正是被审的人**。所以每条取舍必须带出处（`HumanDecision` / `RecordedDecision` / `OrchestratorClaim`），且必须写成「影响边界 + 请只报哪类」而不是「别管」—— 否则它就是一份封口文件，而这套门禁唯一的资产就是信誉。门禁会逐条检查出处。
++- **`references/adversarial-reviewer-prompt.md`** —— 第二轮的提示词。它要求审查者**动手重跑上一轮的命令**，然后逐条判决：确认成立 / 驳倒 / 未决，三段缺一不可。
++
++```bash
++python fresh-eyes-review/scripts/check_review_report.py --falsify --handoff .review-handoff.md round2.md
++```
++
++第二轮报告**不走**发现块那套格式 —— 它判的是**报告**，不是代码，不该被逼着为每条都造一个新证据。但它必须说清每条旧发现的去向。
++
++**什么时候值得开这一轮**：改动碰数据 / 凭据 / 权限 / 不可逆操作，或者夜里无人值守跑。写个 UI 文案不必。**换一个模型更好** —— 同族模型会共享盲区（Knight & Leveson 1986），而这一轮最怕的正是「两个审查者一起错」。
++
+ ### 报告格式（契约）
+ 
+ 门禁、提示词模板、这个 README 描述的是同一份格式。改格式要三处一起改，并跑回归。
+@@ -166,6 +213,8 @@ python fresh-eyes-review/scripts/check_review_report.py --replay report.md
+ - 位置：path/to/file.ext:123
+ - 复现：python tools/check.py --case power-on
+ - 证据文件：.review-evidence/F1.txt
++- 反向前置：python -m pytest tests/test_power_on.py::test_rejects_disabled_user
++- 反向前置证据：.review-evidence/F1-red.txt
+ - 实测：<一句话摘要；以证据文件为准>
+ - 影响：<丢数据 / 泄凭据 / 静默失效 / 只是难看>
+ - 建议修法：<一句话；不确定就写「不确定」>
+@@ -180,7 +229,11 @@ checked=1 same=0 attached=0 calls=0
+ 
+ `实测` 与 `证据文件` 至少要有一个；有证据文件时以文件为准，`--replay` 档要求必须有证据文件。
+ 
+-门禁接受几种等价写法：`- 位置：…`、`- **位置**：…`、`location: …`；值可以写在标签同一行，也可以写在下面几行（多行命令、围栏里的真实输出都算）。
++**`反向前置` 是这条发现最硬的部分**：一条在**有缺陷的代码上会失败**的命令，它的证据文件首行退出码必须是**非零**。记成 `[exit code: 0]` 意味着命令通过了 = 缺陷不成立，门禁**直接判不合格**（不是提醒）。这一行也不接受「未能执行」——别的字段可以写"跑不了 + 原因"，这一行不行。最理想的是它**在修复后变成通过**：先红后绿，同时证明缺陷存在、且修复真的修掉了它。
++
++两条命令对应两个时刻，别搞混：**`--pre-fix` 在动手改之前跑**（重跑反向前置命令，要求它仍然失败 —— 跑绿了就说明缺陷复现不了，先别修）；**`--replay` 在改完之后跑**（重跑复现命令，与落盘证据比对）。同一个报告先过前者、修完再过后者，这条发现才算走完。
++
++门禁接受几种等价写法：`- 位置：…`、`- **位置**：…`、`location: …`；值可以写在标签同一行，也可以写在下面几行（多行命令、围栏里的真实输出都算）。`反向前置` 的等价标签还包括 `前置复现`、`pre-fix`、`red`。
+ 
+ ### 更省的一档
+ 
+@@ -269,7 +322,7 @@ Copyright (c) 2026 Dely0
+   python fresh-eyes-review/scripts/test_check_review_report.py
+   ```
+ 
+-  这套 **36 条**断言自造夹具、不依赖外部文件，覆盖了这条流水线上真实踩过的坑（末条发现被尾部小节补齐、散文报告靠"无问题"子串蒙混、GBK/UTF-16 误杀、加粗标签被误判、多行证据被判为空、填充词当证据、悬空证据文件、缺少退出码首行、重放不一致 / 退出码不一致 / 命中拒绝表 / 超时、易变内容归一化……）。
++  这套 **70 条**断言自造夹具、不依赖外部文件，覆盖了这条流水线上真实踩过的坑（末条发现被尾部小节补齐、散文报告靠"无问题"子串蒙混、GBK/UTF-16 误杀、加粗标签被误判、多行证据被判为空、填充词当证据、悬空证据文件、缺少退出码首行、位置指向不存在的文件、位置行号超出范围、含空格路径、非代码后缀写在前面导致的整体绕过、URL 不被当成文件、反向前置证据记成 exit 0、缺反向前置、`--pre-fix` 下缺陷复现不了、`--pre-fix` 与 `--replay` 互斥、`--replay` 下前置命令必须已转绿、交接文档缺出处、对抗性复审缺三段、重放不一致 / 退出码不一致 / 命中拒绝表 / 超时、易变内容归一化……）。
+ 
+ - **加新规则，先加一条会红的断言。** 修之前必须红，修之后必须绿——否则你不知道这条断言是否真的咬住了问题。
+ - **报告格式是契约。** 改它要同时改 `SKILL.md`、`references/reviewer-prompt.md` 和门禁，并跑回归。
+diff --git a/fresh-eyes-review/SKILL.md b/fresh-eyes-review/SKILL.md
+index 1058969..912e5cd 100644
+--- a/fresh-eyes-review/SKILL.md
++++ b/fresh-eyes-review/SKILL.md
+@@ -46,6 +46,15 @@ whenToUse: 改动不可逆或涉及凭据与数据时；夜里无人值守运行
+ 
+ **不要**写进"我为什么这么写"。那会把你的假设一起传染给它，等于把独立性抵消掉。
+ 
++**但要写「哪些已经定死了」。** 这两件事容易被混为一谈，区别很重要：
++
++| 该藏起来的 | 该给它的 |
++|---|---|
++| 你的**推理过程**（"我认为这样是对的，因为…"） | 范围、验收标准、环境约束 |
++| 具体某处代码的**自我辩护** | 有出处的决策记录（谁定的、在哪儿定的） |
++
++想把后者写清楚、又不越界变成「封口」，用 `references/handoff-template.md` 落成 `<工作目录>/.review-handoff.md`。它在**首轮其实就有用**（避免审查者在已知取舍上白费力气），在第四步的模式 C 里则是**必需**——第二轮必须知道第一轮说了什么才能去怼它。
++
+ ### 第二步：委派一个空对话的审查者
+ 
+ 用 `subagent`，它默认 provider 就是 `spawn`：
+@@ -81,18 +90,52 @@ subagent(
+ **1. 先过格式门禁。** 把它的报告存成文件，然后：
+ 
+ ```bash
+-python "<skill-dir>/scripts/check_review_report.py" <report.md>            # 默认：查格式与证据文件可用性
+-python "<skill-dir>/scripts/check_review_report.py" --replay <report.md>    # 重放：重跑每条命令并与证据文件 diff
++python "<skill-dir>/scripts/check_review_report.py" <report.md>              # 默认：查格式与证据文件可用性
++python "<skill-dir>/scripts/check_review_report.py" --pre-fix <report.md>    # 改之前跑：重跑「反向前置」，必须仍然失败
++python "<skill-dir>/scripts/check_review_report.py" --replay <report.md>     # 改之后跑：重跑复现命令并与证据文件 diff
++# 模式 C（对抗性复审）——第二轮：
++python "<skill-dir>/scripts/check_review_report.py" --falsify --handoff .review-handoff.md <round2.md>
+ ```
+ 
+-退出码：**0** 每条都带齐证据 / **1** 有条目不合格 / **2** 报告读不了（缺文件、未知参数、编码解不开）。
++退出码：**0** 每条都带齐证据 / **1** 有条目不合格 / **2** 报告读不了（缺文件、未知参数、编码解不开；`--pre-fix` 与 `--replay` 同时出现也退 2）。
+ 
+-**两档的区别是关键**：默认档只查"写了没有"（含证据文件在不在、首行是不是 `[exit code: N]`）；**`--replay` 档会真的重跑每条复现命令、与落盘证据逐行比对**。所以：
++**三档的区别是关键**：默认档只查"写了没有"（含证据文件在不在、首行是不是 `[exit code: N]`、位置真不真）；**`--pre-fix` 档在动手修之前跑，重跑每条的「反向前置」命令并要求它仍然失败**；**`--replay` 档在修完之后跑，重跑复现命令并与落盘证据逐行比对**。
+ 
+ - 默认档 0 分**不代表内容为真** —— 你可以编一段输出，它照样放行。
+-- `--replay` 档 0 分才叫"这条证据是真的跑出来的"，而且现在还能跑出同样的结果。
++- `--pre-fix` 0 分才叫"缺陷真的被观察到失败"：修之前先跑一次，跑不红就别修。
++- `--replay` 0 分才叫"这条证据是真的跑出来的"，而且现在还能跑出同样的结果。
++
++**两条命令、两个时刻，别搞混**：`--pre-fix` 是**改之前**（要求失败），`--replay` 是**改之后**（要求一致）。同一个报告先过前者、修完再过后者，这条发现才算走完——**先红后绿**。
++
++可选参数：`--workdir DIR`（默认报告所在目录）、`--timeout SEC`（默认 120）、`--strict`（缺严重度、位置没行号、**位置指向不存在的文件**、**缺少反向前置**这类提醒也计为不合格）。
++
++**门禁还会顺手核实「位置」是不是真的。** 它从位置里解析出 `路径:行号`，检查文件在 `--workdir` 下存在、且行号不超过文件总行数（只对代码类后缀做这件事，文档类审查不会被误伤）。默认档只提醒，`--strict` 才算不合格——因为报告可以合法地引用 `--workdir` 之外的路径。
++
++为什么值得加这一条：**重放只能证明「命令能跑、输出和证据文件一致」，完全无法证明「被指控的文件和行号真的存在」。** 实测过一种攻击：位置写成 `src/does_not_exist.py:9999`，命令和证据全部合规，重放档照样给绿——而幻觉路径恰恰是 LLM 的典型失败模式。这类机械可查的东西不该推给人。
++
++**「反向前置」是治「命令没有证明力」的那味药。** 门禁验不了"这条命令是否真的触及被指控的代码"，但它能验一件更硬的事：**你声称有缺陷，那就得给出一个在有缺陷的代码上会失败的命令，而且退出码必须非零。**
++
++**它堵住了哪一半、没堵住哪一半（都是实测过的）**：
++
++- ✅ **证据文件记成 `[exit code: 0]` 的恒真证据，四个档位全部拦下。** 记成 0 等于自认「命令在缺陷代码上通过了」＝缺陷不成立，这是硬失败。
++- ✅ **`--replay` 会重跑反向前置命令并要求它已经通过**（先红后绿的绿半边）。所以「修完之后前置命令仍然失败」会被抓住——修复没完成，或那条命令与缺陷无关。
++- ❌ **把前置证据的退出码伪造成 `[exit code: 1]`、命令本身却是恒真的，只有 `--pre-fix` 抓得住**（因为只有它会在改之前真的重跑）。默认档、`--strict`、`--replay` 都会放行。
++
++> **这条决定了工作流**：`--pre-fix` **不是可选项**。任何一条发现，都要在动手改之前先跑一次 `--pre-fix`；只跑 `--replay` 就相当于放弃了红半边，上面那个伪造缺口就一直开着。
++
++四种攻击姿态 × 四个档位的实测防线（✅ 拦下 / ⚠️ 放行）：
+ 
+-可选参数：`--workdir DIR`（默认报告所在目录）、`--timeout SEC`（默认 120）、`--strict`（缺严重度、位置没行号这类提醒也计为不合格）。
++| 攻击姿态 | 默认 | `--strict` | `--replay` | `--pre-fix` |
++|---|---|---|---|---|
++| 位置指向不存在的文件/行号 | ⚠️ | ✅ | ✅ | ⚠️ |
++| 跑一条与发现无关的命令（前置也是无关的失败） | ⚠️ | ⚠️ | ✅ | ⚠️ |
++| 证据只留输出的一行（选择性摘录） | ⚠️ | ⚠️ | ✅ | ⚠️ |
++| 恒真命令 + 证据记成 exit 0 | ✅ | ✅ | ✅ | ✅ |
++| 恒真命令 + 把前置证据伪造成 exit 1 | ⚠️ | ⚠️ | ⚠️ | ✅ |
++
++注意 `--replay` 之所以能拦下「位置不存在」和「无关命令」，靠的是它的两个附加校验（位置可核实性 + 前置命令必须已转绿），不是靠重放本身。
++
++**别误读这张表**：`--pre-fix` 不是万能的，它只回答"你给的前置命令现在失败吗"。**「碰巧失败的无关命令」仍然能骗过它** —— 那条命令在改前改后都失败，四个档位里只有 `--replay` 会因为「前置没转绿」而拦下它，而当作者真的把缺陷修好、只是命令选得无关时，就只剩人判断了。要问的还是那句：这条命令跑在「有问题」和「没问题」两种代码上，输出会不一样吗？
+ 
+ 门禁接受模板里的所有自然写法：`- 位置：…`、`- **位置**：…`、`location: …`，值可以写在标签同一行，也可以写在下面几行（多行命令、围栏里的真实输出都算）。
+ 
+@@ -104,24 +147,44 @@ python "<skill-dir>/scripts/check_review_report.py" --replay <report.md>    # 
+ 
+ **3. 由你来修，每修一条补一个断言。** 断言写进**项目既有的测试文件**（照该项目已有的约定与命令）；项目没有测试约定时，先建一个最小测试文件，并在交付说明里写清它的路径和运行命令 —— 不要往 skill 目录或 `node_modules` 里塞测试。
+ 
+-**4. 然后反向验证。** 把 bug 故意装回去，测试必须变红。
++**4. 然后反向验证。这一步不是可选项，是收口动作本身。** 把 bug 故意装回去，测试必须变红。
+ 
+-- 红不了 → 说明断言没咬住，**继续改断言，不是继续改代码**。
++- 红不了 → 说明断言没咬住，**继续改断言，不是继续改代码**；没演示过变红，就不算修完。
+ - 这一步是整套流程里**最值得优先做的那一条**：它把"有人看过"变成"机器以后一直看着"。
++- **它专门补掉门禁的一个洞**：门禁能验「证据真的跑出来了」，但**验不了「这条命令对结论有没有证明力」**——跑一条恒真命令（`assert True`）配上合规的证据文件，门禁会放行。断言能不能变红，是唯一能拦住这种情况的东西。
+ - 收尾核对一遍工作目录：**没有留下临时脚本、样例文件或 `__pycache__`**。
+ 
+ **5. 最后你自己只看两件事**：证据能不能重现、这条要不要接受。这就是人类仲裁，本来就该你做。
+ 
++### 第四步（可选，价值最高的一轮）：对抗性复审
++
++**前提**：第一轮走了、而且你有理由认为它可能报错。**代价**：再一轮的时间与 token。**什么时候值得**：改动碰数据/凭据/权限/不可逆操作，或者夜里无人值守跑。
++
++这一轮问的问题和首轮**完全不同**：不是「这段代码有什么问题」，而是「**上一轮那份报告，哪一条是错的**」。理由：一次自信的**错误**发现，下游代价最大 —— 它会让人去改本来没错的代码。而首轮的审查者自己不会知道自己报错了，只有第二个审查者能把它按下去。
++
++流程：
++
++1. **先写交接文档** `<工作目录>/.review-handoff.md`，用 `references/handoff-template.md`。它是写给审查者的简报：范围、环境约束、**已定取舍（每条必须带出处）**、以及**上一轮已驳回的发现及其理由**。
++   - 为什么必须有它：审查者是空上下文的，它不知道哪些是**已经定死的取舍**，会把它们当缺陷报上来、还认真复现一遍 —— 那是真金白银。
++   - 为什么它危险：**写它的人正是被审的人**。所以每条取舍必须带出处（`HumanDecision` / `RecordedDecision` / `OrchestratorClaim`），且必须写成「影响边界 + 请只报哪类」而不是「别管」。门禁会逐条检查出处。
++2. **委派第二个空上下文审查者**，用 `references/adversarial-reviewer-prompt.md`。给它：上一轮报告、交接文档、工作目录，并要求它**动手重跑**上一轮的命令。换一个模型更好（同族模型共享盲区）。
++3. **过门禁**：`--falsify --handoff .review-handoff.md`。它会检查第二轮报告是否分齐三段（确认成立 / 驳倒 / 未决）、每条是否带判定标注，以及交接文档的取舍是否都有出处。
++
++第二轮报告**不走**发现块那套格式 —— 它判的是**报告**，不是代码，所以不该被逼着为每条都造一个新证据。但它必须说清：每条旧发现是**确认**、**驳倒**还是**未决**。
++
+ ## 铁律
+ 
+ 1. 没有复现命令和证据的条目 = 意见，不是发现 → 丢弃。
+ 2. 跑不了就说跑不了。**编造输出比不报更糟** —— 而且现在会被 `--replay` 抓住。
+ 3. 只报问题，不报夸奖。
+-4. 收口永远是"装回去必须变红"。
++4. 收口永远是"装回去必须变红"，而且要当场演示。**没演示过变红，就不算修完。**
+ 5. 用空上下文（spawn），不用继承上下文（DSH 的 `subagent_fork`）。注意别的平台 "fork" 可能含义相反。
+ 6. 审查者只读，不改文件；修和补断言都是编排者的事。
+ 7. 收尾不留临时产物。
+ 8. 重放一致只证明"证据是真的"，**不证明结论正确**；重放不一致要升级给人，不是自动定罪。
++9. **位置必须真实存在。** 门禁会核实（`--strict` 下算不合格）——被指控的文件都找不到，后面的证据再漂亮也是空的。
++10. **每条发现都要有「反向前置」：一个在有缺陷的代码上会失败的命令，退出码非零。** 门禁会查这条证据的退出码（记成 0 直接判不合格，等于自认命令通过了）。**先跑 `--pre-fix` 看它红不红，再动手修** —— 跑不红就别修，先怀疑这条发现。
++11. **「这条命令凭什么能证明这个结论」永远要人判断。** 门禁能验「命令失败了、而且失败得可复现」，验不了「它的失败指向那条结论」。跑一条碰巧失败的无关命令，仍然能骗过它。
+ 
+ ## 更省的一档（连审查者都不开）
+ 
+@@ -133,24 +196,28 @@ python "<skill-dir>/scripts/check_review_report.py" --replay <report.md>    # 
+ 
+ ### scripts/check_review_report.py
+ 
+-审查报告的门禁，两档：
++审查报告的门禁，四档：
+ 
+-- **默认档**：查格式。每条发现是否带齐「位置 / 复现 / 证据（内联实测或证据文件）」，证据文件在不在、首行是不是 `[exit code: N]`。
+-- **`--replay` 档**：**重跑**每条复现命令，把真实输出与落盘证据**归一化后逐行比对**（时间戳、耗时、uuid、临时路径、pid、地址会被折叠）。退出码一致、输出一致才算过。
++- **默认档**：查格式。每条发现是否带齐「位置 / 复现 / 证据（内联实测或证据文件）」与「反向前置」，证据文件在不在、首行是不是 `[exit code: N]`，**反向前置证据的退出码是否非零**，以及**「位置」指向的文件是否真的存在、行号是否在文件范围内**（后两项之外，位置与缺失反向前置只提醒，`--strict` 下才算不合格；**反向前置证据记成 0 是硬失败**）。
++- **`--pre-fix` 档**（**改之前**跑）：**重跑**每条「反向前置」命令，**要求它现在仍然失败**。跑绿了就说明缺陷复现不了 —— 先别修，回去看这条发现是不是真的。
++- **`--replay` 档**（**改之后**跑）：**重跑**每条复现命令，把真实输出与落盘证据**归一化后逐行比对**（时间戳、耗时、uuid、临时路径、pid、地址会被折叠）；**同时重跑反向前置命令并要求它已经通过**，补上「先红后绿」的绿半边。退出码一致、输出一致且前置已转绿才算过。
++- **`--falsify` 档**（**模式 C**，必须配 `--handoff`）：校验**对抗性复审报告**——是否分齐「我确认成立的 / 我驳倒的 / 未决」三段、每条判定是否带标注；同时校验**交接文档**——必需小节在不在、`## 已定取舍` 每条是否带出处。第二轮判的是**报告**不是代码，所以它不走发现块那套格式。
+ 
+-退出码：0 全合格 / 1 有不合格 / 2 报告读不了。可以直接当 CI 门禁用 —— 它自带回归套件（见下），所以"退出码语义"是被断言钉住的，不是口头约定。报告格式由 `references/reviewer-prompt.md` 规定，两者是配套的，改格式要同时改这两处，并跑一遍回归。
++退出码：0 全合格 / 1 有不合格 / 2 报告或交接文档读不了、用法错误。可以直接当 CI 门禁用 —— 它自带回归套件（见下），所以"退出码语义"是被断言钉住的，不是口头约定。报告格式由 `references/reviewer-prompt.md` 规定，两者是配套的，改格式要同时改这几处（SKILL.md、模板、门禁），并跑一遍回归。
+ 
+-> `--replay` **不是沙箱**：它执行报告里写的命令，只有拒绝表与超时。只在你读过、且愿意让那些命令碰过的报告上开。重放一致 ≠ 结论正确；重放不一致 ≠ 造假（可能是环境差异）——升级给人判断。
++> `--pre-fix` 与 `--replay` **都不是沙箱**：它们执行报告里写的命令，只有拒绝表与超时。只在你读过、且愿意让那些命令碰过的报告上开。重放一致 ≠ 结论正确；重放不一致 ≠ 造假（可能是环境差异）——升级给人判断。
+ 
+ ```bash
+ python "<skill-dir>/scripts/check_review_report.py" <report.md>
++python "<skill-dir>/scripts/check_review_report.py" --pre-fix [--workdir DIR] [--timeout SEC] <report.md>
+ python "<skill-dir>/scripts/check_review_report.py" --replay [--workdir DIR] [--timeout SEC] <report.md>
++python "<skill-dir>/scripts/check_review_report.py" --falsify --handoff FILE <round2.md>
+ python "<skill-dir>/scripts/check_review_report.py" --strict <report.md>   # 提醒也算不合格
+ ```
+ 
+ ### scripts/test_check_review_report.py
+ 
+-门禁的回归套件：**36 条断言**，覆盖这条流水线上真实踩过的坑（末条发现被尾部小节补齐、散文报告靠"无问题"子串蒙混、GBK/UTF-16 误杀、加粗标签被误判、多行证据被判为空、填充词当证据、`未能执行` 的原因阈值、悬空证据文件、证据文件缺退出码首行、重放不一致/退出码不一致/命中拒绝表/超时、易变内容归一化……）。夹具现造，不依赖任何外部文件。
++门禁的回归套件：**70 条断言**，覆盖这条流水线上真实踩过的坑（末条发现被尾部小节补齐、散文报告靠"无问题"子串蒙混、GBK/UTF-16 误杀、加粗标签被误判、多行证据被判为空、填充词当证据、`未能执行` 的原因阈值、悬空证据文件、证据文件缺退出码首行、**位置指向不存在的文件、位置行号超出范围、含空格路径、非代码后缀写在前面导致的整体绕过、URL 不被当成文件、无目录的代码文件名**、**反向前置证据记成 0、缺反向前置证据、缺反向前置字段、反向前置写「未能执行」、`--pre-fix` 下缺陷复现不了、`--pre-fix` 与 `--replay` 互斥、反向前置命令同样受拒绝表约束、`--replay` 下前置命令必须已转绿**、**交接文档缺出处 / 缺取舍条目 / 文件不存在、`--falsify` 缺三段 / 缺判定标注 / 必须配 `--handoff`**、重放不一致/退出码不一致/命中拒绝表/超时、易变内容归一化……）。夹具现造，不依赖任何外部文件。
+ 
+ **改完门禁必须跑它，且必须全绿**；全绿代表"门禁行为与文档一致"，不代表某份具体报告合格。要加新规则，先在这里加一条会红的断言。
+ 
+@@ -160,7 +227,15 @@ python "<skill-dir>/scripts/test_check_review_report.py"
+ 
+ ### references/reviewer-prompt.md
+ 
+-**要给子 agent 的完整提示词模板**，含强制输出格式（四个字段 + 证据文件的 `[exit code: N]` 约定）与七条规矩。每次委派前读它、填掉 `<...>`。
++**首轮**要给子 agent 的完整提示词模板，含强制输出格式（六个字段，含**反向前置**及其证据 + 证据文件的 `[exit code: N]` 约定）与八条规矩。每次委派前读它、填掉 `<...>`。
++
++### references/handoff-template.md
++
++**交接文档模板**（模式 C 的前提）。它是执行者写给审查者的简报：范围、环境约束、**已定取舍（每条带出处）**、上一轮已驳回的发现及其理由。三条硬规矩写在里面 —— 尤其「取舍必须写成可证伪 + 有边界，不能写成别管」，因为写这份文档的人正是被审的人。
++
++### references/adversarial-reviewer-prompt.md
++
++**模式 C（对抗性复审）**的提示词。它问的问题和首轮完全不同：不是「这段代码有什么问题」，而是「**上一轮那份报告哪一条是错的**」。配套的三段式输出格式（确认成立 / 驳倒 / 未决）与规矩都在里面。
+ 
+ ### references/anti-patterns.md
+ 
+diff --git a/fresh-eyes-review/references/adversarial-reviewer-prompt.md b/fresh-eyes-review/references/adversarial-reviewer-prompt.md
+new file mode 100644
+index 0000000..7aeaf43
+--- /dev/null
++++ b/fresh-eyes-review/references/adversarial-reviewer-prompt.md
+@@ -0,0 +1,76 @@
++# 对抗性复审提示词（模式 C）
++
++这是**第二轮**审查的提示词。它和首轮的目的完全不同：
++
++| | 首轮 | 对抗性复审（模式 C） |
++|---|---|---|
++| 问的问题 | 「这段改动有什么问题？」 | 「**上一轮这份报告，哪一条是错的？**」 |
++| 主要输出 | 新发现 | **对旧发现的判决** |
++| 最怕的失败 | 漏报 | 让一条**自信的错误发现**流到下游 |
++
++为什么专门做这一轮：一次自信的错误发现，下游代价最大 —— 它会让人去改**本来没错**的代码，还会带出一次新的改动风险。首轮审查者报错一条，它自己不会知道；只有第二个审查者能把它按下去。
++
++**前提**：必须先有 `.review-handoff.md`（见 `handoff-template.md`）。没有它，这一轮就退化成「再审一遍」，那份钱不如省下来。
++
++---
++
++## 你要审的东西
++
++- 工作目录：`<绝对路径>`
++- **上一轮的审查报告**：`<路径>`
++- **交接文档**：`<路径>，通常是 .review-handoff.md`
++- 上一轮的证据文件在哪：`<路径>`
++- 改动范围：`<同上轮；或直接看 git diff>`
++- 证据写到哪：`<如 .review-evidence-round2/>，不要覆盖第一轮的证据文件>`
++
++## 你的任务（按优先级）
++
++1. **证伪**：对上一轮的**每一条**发现，尝试证明它是错的。
++   - 最有力的武器是**动手重跑它的命令**，并检查它的证据文件与真实输出是否一致。
++   - 如果它的「反向前置」在修复前的代码上其实**不会失败**，那这条发现就不成立 —— 这是最常见的错报形态。
++   - 如果它引用的位置不存在、行号超范围、或命令与结论无关，也要指出。
++2. **指出漏报**：上一轮没看到的、而你在复审中撞见的问题。
++3. **检查取舍**：交接文档里每条「已定取舍」，验证它的**影响边界**是否成立、边界之外有没有影响。**边界之外的任何东西，照报。**
++4. **判读交接文档的出处**：`OrchestratorClaim` 的条目只是声明。如果一条声明把某个缺陷排除在审查之外，而你没有独立证据支持它，就照报并说明。
++
++## 输出格式（强制）
++
++分三段，**每段都不能省**。每条一行，行末必须带 `· 严重度：高|中|低` 或 `· 判定：<你的判定>`。
++
++```
++### 对抗性复审 · 目标：<上一轮报告路径或日期，共 N 条>
++
++## 我确认成立的
++- F<编号> <一句话> · 严重度：高
++- F<编号> <一句话> · 严重度：中
++
++## 我驳倒的（上一轮报错了）
++- F<编号> 上一轮说「<它的原话>」，实际是「<真实情况>」 · 严重度：低
++- F<编号> <一句话> · 判定：证据无法复现
++
++## 未决
++- F<编号> <一句话，以及为什么本地没法判定>
++```
++
++**每一段都必须存在**，哪怕只有一行 `- 无`。三段缺一段，门禁会判不合格 —— 因为「没提」和「确认成立」是两件完全不同的事，读者必须能分清。
++
++**驳倒时要写清「它说的 vs 实际的」**：只写「不成立」是没用的，下一轮还得从头核。
++
++## 规矩
++
++1. **每一条判决都要有证据。** 你重跑了什么、看到什么、落在哪个证据文件 —— 写清楚。凭印象说「我觉得它不对」不算判决。
++2. **证据文件格式同上轮**：首行 `[exit code: N]`，其后原始输出，不改写、不节选。
++3. **你可以不同意交接文档。** 尤其当里面写的是 `OrchestratorClaim`：那是执行者自己的话，不是已验证的事实。
++4. **不要为了驳回而驳回。** 确认成立的也要明确写出来 —— 「我确认这条成立」本身就是有价值的结论，它把不确定性收掉了。
++5. **只报问题，不报夸奖。** 「这段写得不错」这类不要写。
++6. 拿不准的放「## 未决」，写清你试过什么、卡在哪。
++
++---
++
++## 给编排者的使用要点
++
++- **要真的能动手**：本轮价值全在「重跑它的命令」上。如果你只把上轮报告贴给它、不让它碰工作目录，那它就只是个审稿人，抓不到「证据是编的」。
++- **别把结论喂给它**：交接文档里写「已驳回」，但**不要**写「我们认为 F3 是误报，所以你也别管」。理由是理由，不是结论。
++- **换一个模型**：如果第一轮用了 A 模型，这一轮换 B —— 同族模型会共享盲区（Knight & Leveson 1986），而对抗性复审最怕的就是「两个审查者一起错」。
++- **它能替代首轮吗？不能。** 它审的是**报告**，不是代码；没有首轮就没有可审的东西。这一轮的价值是给首轮的结论**拧一道螺丝**，不是替代首轮。
++- **只有值得的改动才配得上这一轮**：涉及数据、凭据、权限、不可逆操作，或者夜里无人值守跑的脚本。写个 UI 文案不必开这一轮。
+diff --git a/fresh-eyes-review/references/anti-patterns.md b/fresh-eyes-review/references/anti-patterns.md
+index 5b573d6..23efc6c 100644
+--- a/fresh-eyes-review/references/anti-patterns.md
++++ b/fresh-eyes-review/references/anti-patterns.md
+@@ -21,6 +21,13 @@
+ 4. **编造的输出** —— 这是真实发生过的事故类型，不是理论风险：有项目（`andrewstellman/quality-playbook`）就是因为模型**执行了命令却把自己编造的期望输出写进证据文件**，才给门禁加了"落盘 + 重跑 + diff"这一层。所以现在格式要求证据落盘，`--replay` 档会重跑比对。发现一次就要整体降权，并明确告诉它"编造输出比不报更糟"。
+ 5. **只报低危（命名、格式、注释）刷屏** —— 要求按严重度排序、只保留高危；低危单独折叠到末尾。**高危数量没有上升时，"多一个审查者"其实是零收益。**
+ 6. **锚定在 diff 上** —— 只报改动的那几行，不看调用方、不看测试、不看文档。明确要求：至少检查一处改动之外的连带影响。
++7. **位置是编的** —— 命令能跑、证据文件也对得上，但位置指向一个**根本不存在**的文件和行号。幻觉路径是 LLM 的典型失败模式。门禁会核实（`--strict` 下算不合格）；位置解析不出来时，自己扫一眼那个文件在不在。
++8. **命令与发现不匹配** —— 这条最隐蔽：命令**真的跑了**，证据文件**也真是它的输出**，重放**也一致**，但那条命令**根本不能证明这条发现**。三个实测过的样子：
++   - ✅ **恒真命令 + 证据记成 exit 0** —— 被机械堵住。反向前置证据的退出码必须**非零**，`assert True` 永远是 0，四个档位都判不合格。
++   - ✅ **恒真命令 + 前置证据伪造成 exit 1** —— 只有 `--pre-fix` 抓得住（只有它会在改之前真的重跑那条命令）。**这就是 `--pre-fix` 不能省的原因**：默认档、`--strict`、`--replay` 都会放行。
++   - ⚠️ **碰巧失败的无关命令** —— 最隐蔽的一种。攻击者找一条在「有缺陷」和「没问题」两种代码上都失败的命令：退出码非零，`--pre-fix` 照样复现。**`--replay` 会因为「前置命令没转绿」把它拦下**（那条命令在修完之后仍然失败）；但如果作者真的把缺陷修好了，只是这条命令选得与结论无关，那就只剩人判断。门禁验不了"这个失败是否指向那条结论"。
++
++   **所以仍然要问人那句：这条命令如果跑在「有问题」和「没问题」两种代码上，输出会不一样吗？** 不会不一样，它就没有证明力——不管它是恒真、伪造还是碰巧失败。
+ 
+ ## 三、退回话术（照抄即可）
+ 
+@@ -46,21 +53,24 @@
+ 
+ ## 四、退出码怎么读
+ 
+-格式门禁 `check_review_report.py` 只回答"写了没有"，`--replay` 才回答"真的跑过没有"：
++格式门禁 `check_review_report.py` 只回答"写了没有"，`--pre-fix` 回答"缺陷真的被观察到失败没有"，`--replay` 才回答"真的跑过没有"：
+ 
+ | 退出码 | 含义 | 你该做什么 |
+ |---|---|---|
+-| 0 | 每条都带齐位置 / 复现 / 证据（`--replay` 下还要求全部重放一致） | **默认档下仍然要自己核实内容**；`--replay` 通过的可以放心用 |
+-| 1 | 有条目缺证据，或有条目的重放不一致 / 被拒绝表拦下 | 缺证据的退回或丢弃；**重放不一致的升级给人判断**，不要直接当造假 |
+-| 2 | 报告读不了（缺文件、未知参数、编码解不开） | 先修编码/路径 —— **这是读取错误，不是"报告不合格"**，两件事不能混 |
++| 0 | 每条都带齐位置 / 复现 / 证据 / 反向前置（`--pre-fix` 下还要求前置命令仍然失败；`--replay` 下还要求全部重放一致） | **默认档下仍然要自己核实内容**；`--pre-fix` / `--replay` 通过的可以放心用 |
++| 1 | 有条目缺证据，**或反向前置证据记成 exit 0**（命令通过了＝缺陷不成立），或前置/重放未按要求表现 / 被拒绝表拦下；`--strict` 下也包含「位置不存在」「缺反向前置」这类提醒 | 缺证据的退回或丢弃；**「前置证据记成 0」等于这条发现不成立**，直接退回；重放不一致的升级给人判断 |
++| 2 | 报告读不了（缺文件、未知参数、编码解不开），或 `--pre-fix` 与 `--replay` 同时给出 | 先修编码/路径/参数 —— **这是读取错误，不是"报告不合格"**，两件事不能混 |
+ 
+-`--strict` 会把"缺严重度""位置没行号"这类提醒也计为不合格（退出 1），适合接 CI；默认档只把它们当建议。
++`--strict` 会把"缺严重度""位置没行号""**位置指向不存在的文件**""**缺少反向前置**"这类提醒也计为不合格（退出 1），适合接 CI；默认档只把它们当建议。
+ 
+ ### `--replay` 的边界（别误解它）
+ 
+ - **它不是沙箱。** 它会在你指定的目录里执行报告里写的命令，只有一层"防手滑"拒绝表和超时。**只在你读过、且愿意让那些命令碰过的报告上开。**
+ - **重放一致 ≠ 结论正确**，只证明"这条证据是真的跑出来的"；判断这条发现是否成立、要不要修，仍然是你的事。
+ - **重放不一致 ≠ 造假**，也可能是环境、数据、依赖版本不同。它只说明"这条现在没法被第三方重放"，按存疑处理并升级给人才是对的。
++- **`--replay` 不足以替代 `--pre-fix`。** 伪造前置证据退出码、命令却是恒真的，只有 `--pre-fix`（改之前真的重跑）能识别。任何真实使用都要在动手改之前跑一次 `--pre-fix`。
++- **「命令有没有证明力」它验不了。** 见第二节第 8 条：一条**碰巧**失败的无关命令可以骗过默认档与 `--pre-fix`；`--replay` 只在它修完后仍然失败时才拦得住。这一条最终仍要人判断。
++- **假失败率还没被测过。** 归一化只折叠十类已知易变 token（时间戳、耗时、uuid、临时路径、pid、地址……），不在表里的易变内容（随机哈希、端口号、乱序输出）会让重放判"不一致"。这是有意选的保守一侧（宁可多升级给人，也不能让编造的证据被放行），但**如果假失败的比例太高，人就会干脆不用 `--replay`，那这一档就白做了**。所以请自己量一下：拿真实项目跑 5~10 次，记录「真差异」和「环境噪声」各占多少。这个数字目前是空的 —— 在它被量出来之前，不要对外声称 `--replay` 已经「可用」。
+ 
+ ## 五、收口：每条修完都要能变红
+ 
+diff --git a/fresh-eyes-review/references/handoff-template.md b/fresh-eyes-review/references/handoff-template.md
+new file mode 100644
+index 0000000..72c8fcd
+--- /dev/null
++++ b/fresh-eyes-review/references/handoff-template.md
+@@ -0,0 +1,76 @@
++# 审查交接文档（模板）
++
++这份文档是**执行者写给审查者的简报**。它的存在理由很实际：审查者是空上下文的，它不知道哪些东西是**已经定死的取舍**，会把它们当缺陷报上来，还认真复现一遍 —— 而它烧掉的每一分钟都是真钱。
++
++**它同时是这套流程里最危险的一份文件，因为写它的人正是被审的人。** 所以下面有三条硬规矩，其中两条会被门禁机械校验。
++
++复制这份模板，填掉 `<...>`，存成 `<工作目录>/.review-handoff.md`（放证据目录旁边，记得 gitignore）。
++
++---
++
++## 三条硬规矩
++
++1. **每条取舍必须带出处。** 出处只有三档，原样写出来：
++   - `HumanDecision`：真人明确要求的
++   - `RecordedDecision`：有记录的决定（哪个 issue / 哪次评审 / 哪个 commit）
++   - `OrchestratorClaim`：执行者自己说的（最弱，等于「我认为」）
++
++   **没有出处的条目不算决定，只算声明。** 门禁会逐条检查（默认只提醒，`--strict` 下算不合格）。
++
++2. **取舍必须写成「可证伪 + 有边界」，不能写成「别管」。**
++   - ❌ 封口写法：`解析器有点脏，这是有意为之，不用管。`
++   - ✅ 可验证写法：`解析器的宽松处理是刻意的（兼容老数据）；影响边界仅限输入校验；请只报「它会静默吞掉数据」这类，不要报「不够优雅」。`
++
++   区别在于：第二种写法里，审查者**仍然能审**——它可以去验证"影响是不是真的只在输入校验"，也可以报边界之外的东西。第一种只是让它闭嘴。
++
++3. **被驳回的发现要写进去，而且「驳回理由」比「发现内容」更值得写。**
++   理由：一个被驳回的**发现**会对下一轮审查者产生强锚定（它倾向于不再深挖那处）；一个被驳回的**理由**锚定弱得多 —— 那是「上轮认为不成立，因为 X」，下一轮完全可以因为 X 不成立而重新提出。
++
++---
++
++## 模板
++
++```markdown
++# 审查交接文档
++
++## 范围
++- 工作目录：`<绝对路径>`
++- 改动范围：`<git diff --stat / 文件清单 / commit 范围>`
++- 验收标准：`<一句话；未提供就写「未提供」>`
++- 本轮审的是什么：`<首轮全面审 / 对抗性复审 见下>`
++
++## 环境与约束（审查者必须遵守的给定条件）
++- 证据文件写到哪：`<如 .review-evidence/>`
++- 临时产物写到哪：`<如系统临时目录；要求 PYTHONDONTWRITEBYTECODE=1>`
++- 能跑什么命令：`<测试 / 构建 / 复现入口；没有就写「无」>`
++- 其他限制：`<不能联网 / 不能改数据库 / 只能在 Windows 上跑 ……>`
++
++## 已定取舍
++（每条一行，四段用 `|` 分隔。没有出处的那条会被门禁点名。）
++
++- <取舍是什么> | 依据：<HumanDecision / RecordedDecision / OrchestratorClaim>：<谁定的、在哪儿定的> | 影响边界：<它只影响什么> | 请只报：<这类才要报；不报：<这类不用报>
++
++## 已驳回的发现（含理由）
++- <上一轮的编号与一句话> | 驳回理由：<为什么判它不成立>
++
++## 上一轮的状态
++- 报告：`<路径>`
++- 已修：`<编号列表>`
++- 未修 / 存疑：`<编号列表；这些是本轮可以继续深挖的>`
++- 已判定为误报：`<编号列表；这些不要重报，除非你有新证据——有新证据就写出来>`
++
++## 你（审查者）必须做的事
++1. 上面每条取舍，检查它的**影响边界**是否成立，以及**边界之外**有没有影响。
++2. `OrchestratorClaim` 的条目**只能当声明**，不能当事实 —— 那是我说的，不是你验证过的。
++3. 这份文档**不是让你少报**。它只让你不在已知取舍上重复消耗；任何新发现照报。
++4. 如果你认为某条「已定取舍」本身是错的，**照报**，并在标题里写明这是对取舍本身的质疑。
++```
++
++---
++
++## 给执行者的自查（写完读一遍）
++
++- [ ] 每条取舍都有出处吗？`OrchestratorClaim` 是不是太多了？（太多说明该去要一个真人的决定）
++- [ ] 有没有哪条其实是在封口？把它改写成「可证伪 + 有边界」。
++- [ ] 上轮驳回的发现，理由写清楚了吗？还是只写了「不成立」？
++- [ ] 有没有把「我为什么这么写」的**推理过程**也写进去了？那是要藏起来的东西 —— 它会把审查者的独立性抵消掉。
+diff --git a/fresh-eyes-review/references/reviewer-prompt.md b/fresh-eyes-review/references/reviewer-prompt.md
+index ef018ff..f3cd5fb 100644
+--- a/fresh-eyes-review/references/reviewer-prompt.md
++++ b/fresh-eyes-review/references/reviewer-prompt.md
+@@ -25,11 +25,19 @@
+ - 位置：<文件路径>:<行号>
+ - 复现：<一条能被别人照抄执行的命令>
+ - 证据文件：<该命令原始输出的落盘路径>
++- 反向前置：<一条「在有缺陷的代码上必定失败」的命令：失败的测试、断言或探针>
++- 反向前置证据：<上面那条命令的原始输出落盘路径；首行退出码必须非零>
+ - 实测：<一句话摘要；以证据文件为准>
+ - 影响：<会不会丢数据 / 泄凭据 / 静默失效 / 只是难看>
+ - 建议修法：<一句话；不确定就写「不确定」>
+ ```
+ 
++**「反向前置」这一行是这条发现最硬的部分。** 你声称有缺陷，那唯一能机械证明的办法就是：给出一个命令，它**在有缺陷的代码上会失败**。所以：
++
++- 它的证据文件首行必须是**非零**的退出码（失败）。记成 `[exit code: 0]` 等于自己承认这条命令通过了 —— 那这条发现不成立，会被直接判不合格。
++- 这一行**不接受「未能执行」**。别的字段可以写"跑不了 + 原因"，这一行不行：跑不了就没有缺陷被观察到失败。
++- 最理想的是它**在修复后会变成通过**（先红后绿）：这才同时证明了缺陷存在、且修复真的修掉了它。
++
+ **证据文件的格式是硬性的**，第一行必须是退出码，其后是命令的原始输出（stdout+stderr 原样，不要改写、不要节选、不要美化）：
+ 
+ ```
+@@ -41,11 +49,12 @@ checked=1 same=0 attached=0 calls=0
+ 
+ 1. **没有复现命令和证据的条目，我这边会直接丢掉。** 别写"可能"、"建议考虑"、"看起来"这类没有落点的判断。
+ 2. **证据必须是你真的跑出来的。** 别把猜测的输出写进证据文件 —— 我这边会**重跑你给的命令并与证据文件逐行比对**，对不上这一条就作废。写「未能执行：<原因>」比编一段输出有价值得多。
+-3. **只报问题。** 不要写夸奖，不要总结做得好的地方。
+-4. 怀疑但拿不出证据的，单独放在末尾的「## 未能验证」一节，写清你怀疑什么、你试过什么。
+-5. 没找到问题就写一句「未发现问题」，**不要为了凑数硬报**。
+-6. **让输出可重放**：如果命令的输出里有时间戳、耗时、临时路径这类每次都变的东西，请在命令里自己把它稳定住（例如 `| sed -E 's/[0-9]+ms//g'`），不要指望比对端替你猜。
+-7. 请特别检查这一类：**"它真的在跑吗？"** —— 有没有测试或断言其实从没被执行、日志报成功但操作没生效、错误被吞掉、超时和失败无法区分、只在特定机器/特定时刻才成立的前提。
++3. **每条都要给出「反向前置」。** 一条命令，在现在的（有缺陷的）代码上跑会失败。它的输出落盘、首行退出码必须非零。给不出这条命令，这条发现就只能算意见。
++4. **只报问题。** 不要写夸奖，不要总结做得好的地方。
++5. 怀疑但拿不出证据的，单独放在末尾的「## 未能验证」一节，写清你怀疑什么、你试过什么。
++6. 没找到问题就写一句「未发现问题」，**不要为了凑数硬报**。
++7. **让输出可重放**：如果命令的输出里有时间戳、耗时、临时路径这类每次都变的东西，请在命令里自己把它稳定住（例如 `| sed -E 's/[0-9]+ms//g'`），不要指望比对端替你猜。
++8. 请特别检查这一类：**"它真的在跑吗？"** —— 有没有测试或断言其实从没被执行、日志报成功但操作没生效、错误被吞掉、超时和失败无法区分、只在特定机器/特定时刻才成立的前提。
+ 
+ ---
+ 
+diff --git a/fresh-eyes-review/scripts/check_review_report.py b/fresh-eyes-review/scripts/check_review_report.py
+index e5198a6..7d8c9a4 100644
+--- a/fresh-eyes-review/scripts/check_review_report.py
++++ b/fresh-eyes-review/scripts/check_review_report.py
+@@ -6,14 +6,30 @@ replay its evidence.
+ The report format is the one mandated by the `fresh-eyes-review` skill. Every
+ finding is a block headed `### F<n> ...` that must carry:
+ 
+-    位置         file:line
+-    复现         one command that anyone can copy and run
+-    实测         the observed output, OR
+-    证据文件      path to a file holding the raw output
++    位置           file:line
++    复现           one command that anyone can copy and run
++    实测           the observed output, OR
++    证据文件        path to a file holding the raw output
++    反向前置        one command that FAILS on the defective code
++    反向前置证据     path to that command's raw output (exit code must be non-zero)
+ 
+ A finding without a location, a reproduction command and either inline output or
+ an evidence file is not evidence, it is an opinion, and must be sent back.
+ 
++WHY THE PRE-FIX LINE EXISTS
++---------------------------
++Replay proves a command ran; it cannot prove the command has any bearing on the
++claim. A reviewer can run `assert True`, record its (matching) output, and pass
++`--replay` while proving nothing. The pre-fix line closes that: if you claim a
++defect is real, the mechanical proof is a command that fails on the defective
++code. Its evidence file must therefore record a NON-ZERO exit code. A recorded
++exit code of 0 means the command passed, so the defect is not demonstrated --
++that is a hard failure, not a warning.
++
++`--pre-fix` re-runs those commands before you fix anything and requires them to
++still fail. `--replay` runs after the fix and requires the reproduction to match.
++Run the first before touching code, the second after: red then green.
++
+ WHY THE EVIDENCE FILE EXISTS
+ ----------------------------
+ Checking that a report merely *mentions* a command and an output proves nothing:
+@@ -29,15 +45,21 @@ read, in a workspace you are willing to have those commands touch.
+ 
+ Usage:
+     python check_review_report.py [--strict] <report.md>
++    python check_review_report.py --pre-fix [--workdir DIR] [--timeout SEC] <report.md>
+     python check_review_report.py --replay [--workdir DIR] [--timeout SEC] <report.md>
+ 
+ Exit codes:
+-    0  every finding carries usable evidence; under --replay, every replay matched
+-    1  at least one finding is missing evidence, or a replay differed / was refused
++    0  every finding carries usable evidence; under --pre-fix, every pre-fix
++       command still fails; under --replay, every replay matched
++    1  at least one finding is missing evidence, or its pre-fix evidence records
++       a passing (0) exit code, or a pre-fix/replay run did not behave as
++       required, or it was refused
+     2  usage, read, or encoding error -- the report could not be read at all
++       (also: --pre-fix and --replay are mutually exclusive)
+ 
+ `--strict` also fails on warnings (missing severity, location without a line
+-number, ...). Default keeps warnings advisory.
++number, a location that does not exist, a missing pre-fix line, ...). Default
++keeps warnings advisory.
+ 
+ Evidence file format (mandatory when the field is present):
+ 
+@@ -78,6 +100,8 @@ FIELD_KEYS = (
+     ("repro", ("复现", "复现步骤", "reproduce", "repro")),
+     ("evidence", ("证据文件", "证据", "evidence file", "evidence")),
+     ("observed", ("实测", "实测输出", "observed", "output")),
++    ("red", ("反向前置", "前置复现", "pre-fix", "prefix", "red")),
++    ("red_evidence", ("反向前置证据", "前置证据文件", "pre-fix evidence", "red evidence")),
+ )
+ 
+ FIELD_NAMES = {
+@@ -85,6 +109,8 @@ FIELD_NAMES = {
+     "repro": "复现",
+     "evidence": "证据文件",
+     "observed": "实测",
++    "red": "反向前置",
++    "red_evidence": "反向前置证据",
+ }
+ 
+ EMPTY_VALUES = (
+@@ -97,8 +123,43 @@ CANNOT_RUN_MARKERS = (
+     "没有执行", "未运行",
+ )
+ 
++# The pre-fix line is the one place a "could not run" escape hatch is refused:
++# the whole point of the line is that the defect was observed failing.
++RED_CANNOT_RUN_MARKERS = (
++    "未能执行", "无法执行", "cannot run", "could not run", "not run",
++    "没有执行", "未运行", "不适用", "无法复现",
++)
++
++# --- handoff document (mode C: adversarial re-review) -----------------------
++# The orchestrator writes this document, and the orchestrator is the party under
++# review, so it is inherently self-serving. Provenance is therefore mandatory on
++# every deliberate-trade-off entry, and it is machine-checked: an entry without
++# an explicit source is a suppression order dressed up as a decision.
++PROVENANCE_MARKERS = ("HumanDecision", "RecordedDecision", "OrchestratorClaim")
++HANDOFF_REQUIRED_SECTIONS = ("范围", "已定取舍")
++FALSIFY_SECTIONS = ("我确认成立的", "我驳倒的", "未决")
++FALSIFY_VERDICT_MARKERS = ("严重度：", "判定：")
++
++USAGE = ("check_review_report.py [--strict] [--replay] [--pre-fix] [--falsify] "
++         "[--handoff FILE] [--workdir DIR] [--timeout SEC] <report.md>")
++
+ EXIT_MARKER_RE = re.compile(r"^\[exit code:\s*(-?\d+)\]\s*$")
+ 
++# --- cited location --------------------------------------------------------
++# A path plus an optional line or line range, e.g. src/dedupe.py:139 or
++# src/dedupe.py:12-34. Validated against the filesystem because a replayed
++# command cannot prove that the *cited* location exists: a reviewer can run a
++# deterministic command, get matching output, and still point at a file and
++# line that were never there.
++LOCATION_RE = re.compile(r"([A-Za-z0-9_.\-/\\]+\.[A-Za-z0-9_]+)[:\uFF1A](\d+)(?:\s*[-–]\s*(\d+))?")
++CODE_SUFFIXES = (
++    ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
++    ".go", ".rs", ".java", ".kt", ".rb", ".php", ".cs", ".c", ".h",
++    ".cc", ".cpp", ".hpp", ".swift", ".scala", ".sh", ".ps1", ".psm1",
++    ".bat", ".cmd", ".sql", ".json", ".yaml", ".yml", ".toml", ".ini",
++    ".cfg", ".md", ".mjs",
++)
++
+ # --- syntax ----------------------------------------------------------------
+ 
+ HEADING_RE = re.compile(r"^[ \t]{0,3}(#{1,6})[ \t]*(.*)$")
+@@ -199,6 +260,112 @@ def is_dangerous(command):
+ # --- reading ---------------------------------------------------------------
+ 
+ 
++def check_handoff(markdown):
++    """Return (problems, warnings) for a handoff document.
++
++    Problems mean the document cannot be used as briefing material (it is
++    missing the sections that make it a briefing rather than an instruction).
++    Warnings are the honesty checks: a deliberate trade-off without provenance
++    is a claim, not a decision, and must be labelled as such.
++    """
++    problems = []
++    warnings = []
++    if markdown.strip() == "":
++        return ["交接文档是空的"], warnings
++
++    lines = markdown.splitlines()
++    has_section = False
++    for line in lines:
++        if line.strip().startswith("##"):
++            heading = line.strip().lstrip("#").strip()
++            if any(section in heading for section in HANDOFF_REQUIRED_SECTIONS):
++                has_section = True
++                break
++    if not has_section:
++        problems.append("交接文档缺少必需小节：「## 范围」与「## 已定取舍」")
++
++    in_tradeoffs = False
++    entries = 0
++    for line in lines:
++        stripped = line.strip()
++        if stripped.startswith("##"):
++            heading = stripped.lstrip("#").strip()
++            in_tradeoffs = "已定取舍" in heading
++            continue
++        if not in_tradeoffs:
++            continue
++        if stripped.startswith(("-", "*", "+")) and len(stripped) > 1:
++            entries += 1
++            if not any(marker in stripped for marker in PROVENANCE_MARKERS):
++                warnings.append("取舍条目没有出处（HumanDecision / RecordedDecision / "
++                                "OrchestratorClaim）：" + stripped[:48])
++    if entries == 0:
++        problems.append("「## 已定取舍」下没有任何条目 —— 空小节和「别管」是一回事")
++
++    return problems, warnings
++
++
++def check_falsify_report(markdown):
++    """Return (problems, warnings) for an adversarial re-review report.
++
++    The point of mode C is that it can *disagree* with round one, so it cannot
++    be forced into the finding-shaped contract. What it can be held to is that
++    it says, per round-one finding, whether it still stands -- and that every
++    claim is labelled ILLUSTRATIVE vs VERIFIED, the same distinction the main
++    report makes between a grep and an observation.
++    """
++    problems = []
++    warnings = []
++    if markdown.strip() == "":
++        return ["对抗性复审报告是空的"], warnings
++
++    headings = [line.strip().lstrip("#").strip() for line in markdown.splitlines()
++                if line.strip().startswith("##")]
++    for section in FALSIFY_SECTIONS:
++        if not any(section in heading for heading in headings):
++            problems.append("对抗性复审报告缺少小节：「## " + section + "」"
++                            "（说不清哪些确认、哪些驳倒，就无法判断它做了什么）")
++
++    # 只对「确认成立 / 驳倒」两节要求逐条判定标注：未决条目本来就没有判定可标。
++    VERDICT_SECTIONS = FALSIFY_SECTIONS[:2]
++    in_verdict_section = False
++    claims = 0
++    for line in markdown.splitlines():
++        stripped = line.strip()
++        if stripped.startswith("##"):
++            in_verdict_section = any(section in stripped for section in VERDICT_SECTIONS)
++            continue
++        if not in_verdict_section:
++            continue
++        if stripped.startswith(("-", "*", "+")) and len(stripped) > 1:
++            claims += 1
++            if not any(marker in stripped for marker in FALSIFY_VERDICT_MARKERS):
++                warnings.append("判定条目没有标注（「· 严重度：」或「· 判定：」）："
++                                + stripped[:48])
++    if claims == 0 and not problems:
++        warnings.append("没有逐条判定 —— 请明确写出你确认了什么、驳倒了什么")
++    return problems, warnings
++
++
++def load_handoff(path, workdir):
++    """Read a handoff document. Returns (markdown, problem)."""
++    full = path if os.path.isabs(path) else os.path.join(workdir, path)
++    if not os.path.isfile(full):
++        return "", "交接文档不存在：" + full
++    try:
++        with open(full, "rb") as handle:
++            raw = handle.read()
++    except OSError as error:
++        return "", "交接文档读不了：" + str(error)
++    try:
++        return raw.decode("utf-8-sig"), None
++    except UnicodeDecodeError:
++        try:
++            return raw.decode("gb18030"), None
++        except UnicodeDecodeError as error:
++            return "", "交接文档编码解不开：" + str(error)
++
++
+ def read_report(path):
+     """Return (text, encoding_note). Raise ReadError when undecodable."""
+     try:
+@@ -384,7 +551,105 @@ def strip_ticks(value):
+     return text
+ 
+ 
+-def check_block(header, fields):
++def count_lines(path):
++    """Line count of a file, counting a trailing newline as a terminator.
++
++    Read as bytes: a file we cannot decode still has a knowable length, and
++    failing to count it must never crash the gate.
++    """
++    try:
++        with open(path, "rb") as handle:
++            data = handle.read()
++    except OSError:
++        return None
++    if data == b"":
++        return 0
++    lines = data.count(b"\n")
++    if not data.endswith(b"\n"):
++        lines += 1
++    return lines
++
++
++def trim_path_left(text, end):
++    """Extend a path leftwards from `end`, stopping at whitespace or punctuation.
++
++    A space stays inside the path only when a separator also sits further left,
++    so `foo.py:1 src/bar.py:2` yields the second path without dragging the first
++    one's tail along. A drive letter is kept: the colon right after a single
++    leading alphanumeric is part of `C:\...`, not a boundary.
++    """
++    start = end
++    while start > 0:
++        char = text[start - 1]
++        if char == ":":
++            if start >= 2 and text[start - 2].isalnum() and (start - 2 == 0 or text[start - 3] in " \t("):
++                start -= 2
++                continue
++            break
++        if char == " ":
++            prefix = text[:start - 1]
++            if "/" not in prefix and "\\" not in prefix:
++                break
++            start -= 1
++            continue
++        if char in "\"'`(),;<>[]{}|*?=":
++            break
++        start -= 1
++    return text[start:end]
++
++
++def path_candidates(location):
++    """Yield (anchor, path, line) for every `<path>:<n>` that hints at code.
++
++    Every match is yielded rather than only the first: a location may list
++    several files, and a non-code one appearing first (a note, a log) must not
++    stop the code paths after it from being checked.
++    """
++    for match in LOCATION_RE.finditer(location):
++        left_extra = trim_path_left(location, match.start(1))
++        anchor = match.start(1) - len(left_extra)
++        # A scheme in the left context means this is a URL, not a cited file;
++        # checking it would only produce a false "file not found".
++        if "://" in location[max(0, anchor - 10):match.end(1)]:
++            continue
++        path = left_extra + match.group(1)
++        if path == "":
++            continue
++        if not path.lower().endswith(CODE_SUFFIXES):
++            continue
++        yield anchor, path, int(match.group(2))
++
++
++def check_location_path(location, workdir):
++    """Warn when a cited file or line is not there.
++
++    This is the one part of a finding that can be checked mechanically without
++    judging meaning, so it should not be left to a human. It warns rather than
++    fails, because a report may legitimately cite a path outside --workdir.
++
++    A location may list several files. Any candidate that resolves counts as
++    "the location is real"; only when none resolves is the citation reported as
++    missing, and the first one is named.
++    """
++    candidates = list(path_candidates(location))
++    if not candidates:
++        return None
++    first_path = candidates[0][1]
++    for _anchor, path, line in candidates:
++        resolved = path if os.path.isabs(path) else os.path.join(workdir, path)
++        if not os.path.isfile(resolved):
++            continue
++        total = count_lines(resolved)
++        if total is not None and line > total:
++            return ("「位置」的行号 " + str(line) + " 超出文件总行数 "
++                    + str(total) + "：" + path)
++    if any(os.path.isfile(p if os.path.isabs(p) else os.path.join(workdir, p))
++           for _a, p, _n in candidates):
++        return None
++    return "「位置」指向的文件不存在：" + first_path + "（在 --workdir 下没找到）"
++
++
++def check_block(header, fields, workdir=None):
+     """Return (problems, warnings) for one finding, before any replay."""
+     problems = []
+     warnings = []
+@@ -411,6 +676,10 @@ def check_block(header, fields):
+             problems.append("「位置」里看不到文件路径")
+         elif LINE_NO_RE.search(location) is None and "行" not in location:
+             warnings.append("「位置」没有行号（文档类审查可以忽略）")
++        if workdir is not None:
++            location_warning = check_location_path(location, workdir)
++            if location_warning is not None:
++                warnings.append(location_warning)
+ 
+     repro = fields.get("repro")
+     if repro and not is_blank(repro):
+@@ -450,6 +719,135 @@ def check_evidence_file(fields, workdir):
+     return None
+ 
+ 
++def check_red(fields, workdir):
++    """Check the pre-fix (red) fields. Returns (problems, warnings).
++
++    The core rule, and the reason this field exists: **the recorded pre-fix
++    exit code must be non-zero.** A finding claims a defect is real; the one
++    mechanical proof of that is a command that fails on the defective code.
++    If the recorded exit code is 0, the command passed and therefore does not
++    demonstrate the defect -- which is exactly how "assert True" posing as a
++    defect report is caught.
++    """
++    problems = []
++    warnings = []
++    red = fields.get("red")
++    red_evidence = fields.get("red_evidence")
++
++    if red is None or is_blank(red):
++        warnings.append("缺少「反向前置」：没有给出「修复前必须失败」的复现入口，缺陷是否真实只能靠人判断")
++        return problems, warnings
++
++    text = strip_ticks(red)
++    lowered = text.lower()
++    cannot_run = None
++    for marker in RED_CANNOT_RUN_MARKERS:
++        if marker in lowered:
++            cannot_run = marker
++            break
++    if cannot_run is not None:
++        problems.append("「反向前置」写了「" + cannot_run + "」——这一行必须是能跑的命令"
++                        "（缺陷被观察到失败，是这条发现唯二的事实之一）")
++        return problems, warnings
++
++    if len(text) < 8:
++        problems.append("「反向前置」太短，不足以让别人照抄执行")
++    elif TECHISH_RE.search(text) is None:
++        warnings.append("「反向前置」里看不到命令、路径或参数，可能只是描述")
++
++    if red_evidence is None or is_blank(red_evidence):
++        warnings.append("有「反向前置」但没有「反向前置证据」文件 —— 修复前的退出码没有被落盘，"
++                        "无法机械核实这条缺陷真的被观察到失败")
++        return problems, warnings
++
++    pointer = strip_ticks(red_evidence)
++    path = pointer if os.path.isabs(pointer) else os.path.join(workdir, pointer)
++    code, body, problem = read_evidence(path)
++    if problem:
++        problems.append("反向前置证据不可用：" + problem)
++        return problems, warnings
++    if code == 0:
++        problems.append("反向前置证据记的是 exit code 0 —— 命令在「有缺陷」的代码上通过了，"
++                        "说明这条缺陷不成立（或这条命令证明不了它）")
++        return problems, warnings
++    if code is None:
++        problems.append("反向前置证据没有可解析的退出码")
++        return problems, warnings
++    if not body.strip():
++        warnings.append("反向前置证据只有退出码、没有失败输出")
++    if code < 0:
++        warnings.append("反向前置证据的退出码是负数（" + str(code) + "）—— 那是信号终止而不是失败，"
++                        "请确认它真的是一次失败的测试运行")
++    return problems, warnings
++
++
++def replay_red(fields, workdir, timeout):
++    """Re-run the pre-fix command; under --pre-fix it must still fail.
++
++    Only meaningful before the fix is applied: once the defect is fixed the
++    command is expected to pass, and reporting DIFFERS then would be wrong.
++    """
++    _problems, _warnings = check_red(fields, workdir)
++    command = strip_ticks(fields.get("red") or "")
++    matched = is_dangerous(command)
++    if matched:
++        return "REFUSED", "命令命中拒绝表（" + matched + "），未执行"
++
++    try:
++        proc = subprocess.run(
++            command,
++            shell=True,
++            cwd=workdir,
++            stdout=subprocess.PIPE,
++            stderr=subprocess.STDOUT,
++            timeout=timeout,
++        )
++    except subprocess.TimeoutExpired:
++        return "TIMEOUT", "重跑超过 " + str(timeout) + "s 仍未结束"
++    except (OSError, ValueError) as error:
++        return "ERROR", "重跑起不来：" + str(error)
++
++    if proc.returncode == 0:
++        return "DIFFERS", ("反向前置命令这次通过了（exit 0）—— 缺陷没能复现。"
++                           "若你已修好它，请改用 --replay 验证修复，而不是 --pre-fix")
++    return "REPRODUCED", ""
++
++
++def replay_red_green(fields, workdir, timeout):
++    """Under --replay, the pre-fix command must have turned GREEN.
++
++    This is the other half of "red then green", and it is what makes a forged
++    pre-fix exit code useless: the command is actually re-run here, so an author
++    cannot claim "this fails on the defective code" with a command that never
++    could. A command that is still failing after the fix means either the fix is
++    incomplete, the command was never about this defect, or it was fabricated.
++    """
++    command = strip_ticks(fields.get("red") or "")
++    matched = is_dangerous(command)
++    if matched:
++        return "REFUSED", "命令命中拒绝表（" + matched + "），未执行"
++
++    try:
++        proc = subprocess.run(
++            command,
++            shell=True,
++            cwd=workdir,
++            stdout=subprocess.PIPE,
++            stderr=subprocess.STDOUT,
++            timeout=timeout,
++        )
++    except subprocess.TimeoutExpired:
++        return "TIMEOUT", "重跑超过 " + str(timeout) + "s 仍未结束"
++    except (OSError, ValueError) as error:
++        return "ERROR", "重跑起不来：" + str(error)
++
++    if proc.returncode != 0:
++        return "DIFFERS", ("反向前置命令修完之后仍然是失败的（exit "
++                           + str(proc.returncode) + "）—— 要么修复没完成，"
++                           "要么这条命令与那条缺陷无关")
++    return "REPRODUCED", ""
++
++
+ def replay_finding(fields, workdir, timeout):
+     """Return (verdict, detail) for one finding under --replay."""
+     command = strip_ticks(fields.get("repro") or "")
+@@ -506,7 +904,7 @@ def replay_finding(fields, workdir, timeout):
+ # --- entry -----------------------------------------------------------------
+ 
+ 
+-def run(path, strict, replay, workdir, timeout):
++def run(path, strict, replay, workdir, timeout, pre_fix=False, handoff=None, falsify=False):
+     try:
+         text, encoding_note = read_report(path)
+     except ReadError as error:
+@@ -523,6 +921,44 @@ def run(path, strict, replay, workdir, timeout):
+         return 2
+ 
+     lines = text.splitlines()
++
++    # --- handoff document (optional, mode C) --------------------------------
++    handoff_warnings = []
++    if handoff is not None:
++        markdown, handoff_problem = load_handoff(handoff, workdir)
++        if handoff_problem is not None:
++            sys.stderr.write(handoff_problem + "\n")
++            return 2
++        handoff_problems, handoff_warnings = check_handoff(markdown)
++        for problem in handoff_problems:
++            print("[FAIL] 交接文档：" + problem)
++        for warning in handoff_warnings:
++            print("[WARN] 交接文档：" + warning)
++        if handoff_problems:
++            print("交接文档不合格 —— 它是审查者的简报，必须能被机器读懂："
++                  "范围为谁、取舍谁的、边界在哪。")
++            return 1
++
++    # --- adversarial re-review (mode C) -------------------------------------
++    if falsify:
++        falsify_problems, falsify_warnings = check_falsify_report(text)
++        for problem in falsify_problems:
++            print("[FAIL] 对抗性复审：" + problem)
++        for warning in falsify_warnings:
++            print("[WARN] 对抗性复审：" + warning)
++        if falsify_problems:
++            return 1
++        if strict and (falsify_warnings or handoff_warnings):
++            print("--strict：对抗性复审/交接文档还有 "
++                  + str(len(falsify_warnings) + len(handoff_warnings)) + " 条提醒未清，本次按不合格处理。")
++            return 1
++        if handoff_warnings and not strict:
++            print("对抗性复审通过（交接文档另有 " + str(len(handoff_warnings))
++                  + " 条提醒，见上）。")
++            return 0
++        print("对抗性复审通过 —— 分段齐全，每条判定都标了出处。")
++        return 0
++
+     blocks = find_blocks(lines)
+ 
+     if not blocks:
+@@ -535,21 +971,49 @@ def run(path, strict, replay, workdir, timeout):
+         return 1
+ 
+     failed = 0
+-    warned = 0
++    warned = len(handoff_warnings) if handoff is not None else 0
+     for number, header, body in blocks:
+         fields = parse_fields(body)
+-        problems, warnings = check_block(header, fields)
+-        warned += len(warnings)
++        problems, warnings = check_block(header, fields, workdir)
+ 
+         if not problems and not is_blank(fields.get("evidence")):
+             evidence_problem = check_evidence_file(fields, workdir)
+             if evidence_problem:
+                 problems.append(evidence_problem)
+ 
++        # The pre-fix checks contribute warnings too, so the count has to happen
++        # after they are merged -- counting earlier silently exempts every
++        # red-field warning from --strict.
++        red_problems, red_warnings = check_red(fields, workdir)
++        problems.extend(red_problems)
++        warnings.extend(red_warnings)
++        warned += len(warnings)
++
+         verdict = None
+         detail = ""
+-        if replay and not problems:
++        green_note = ""
++        if pre_fix and not problems:
++            if is_blank(fields.get("red")):
++                verdict = "NO-EVIDENCE"
++                detail = "没有「反向前置」，无法核实缺陷是否真的被观察到失败"
++            else:
++                verdict, detail = replay_red(fields, workdir, timeout)
++        elif replay and not problems:
+             verdict, detail = replay_finding(fields, workdir, timeout)
++            # "red then green" needs both halves: --pre-fix proves the command
++            # failed before the fix, --replay proves it passes after. Running
++            # the second here is what makes a forged pre-fix exit code useless.
++            if verdict == "REPRODUCED":
++                if is_blank(fields.get("red")):
++                    warnings.append("这条发现没有「反向前置」，所以只验了「修复后能重现」，"
++                                    "没有验过「修复前确实失败」——先补前置命令，改之前用 --pre-fix 跑一次")
++                    warned += 1
++                else:
++                    green_verdict, green_detail = replay_red_green(fields, workdir, timeout)
++                    if green_verdict != "REPRODUCED":
++                        verdict, detail = green_verdict, green_detail
++                    else:
++                        green_note = "反向前置命令修完之后已通过（先红后绿）"
+         elif replay:
+             verdict = "NO-EVIDENCE"
+             detail = "字段不齐，未尝试重放"
+@@ -561,14 +1025,19 @@ def run(path, strict, replay, workdir, timeout):
+             for problem in problems:
+                 print("       - " + problem)
+             if verdict is not None and verdict != "REPRODUCED":
+-                print("       - 重放：" + verdict + " " + detail)
++                print("       - " + ("前置重跑：" if pre_fix else "重放：") + verdict + " " + detail)
+         else:
+             label = "[ OK ]"
+             if verdict == "REPRODUCED":
+                 label = "[OK/▶ ]"
+             print(label + " F" + number + " " + header)
+             if verdict == "REPRODUCED":
+-                print("       重放：输出与证据文件一致")
++                if pre_fix:
++                    print("       前置重跑：命令仍然失败 —— 缺陷被复现")
++                elif green_note != "":
++                    print("       重放：输出与证据文件一致；" + green_note)
++                else:
++                    print("       重放：输出与证据文件一致")
+         for warning in warnings:
+             print("       ! " + warning)
+ 
+@@ -588,7 +1057,9 @@ def run(path, strict, replay, workdir, timeout):
+         print("--strict：还有 " + str(warned) + " 条提醒未清，本次按不合格处理。")
+         return 1
+ 
+-    if replay:
++    if pre_fix:
++        print("前置重跑通过 —— 每条都给出了「修复前必须失败」的命令，而且它现在真的还失败着。")
++    elif replay:
+         print("格式达标且全部重放一致 —— 每条都真的跑过，而且现在还能跑出同样的结果。")
+     else:
+         print("格式达标 —— 这只说明每条都写了位置/复现/证据，"
+@@ -600,6 +1071,9 @@ def main(argv):
+     args = []
+     strict = False
+     replay = False
++    pre_fix = False
++    falsify = False
++    handoff = None
+     workdir = None
+     timeout = 120.0
+ 
+@@ -610,6 +1084,16 @@ def main(argv):
+             strict = True
+         elif item == "--replay":
+             replay = True
++        elif item == "--pre-fix":
++            pre_fix = True
++        elif item == "--falsify":
++            falsify = True
++        elif item == "--handoff":
++            index += 1
++            if index >= len(argv):
++                sys.stderr.write("--handoff 需要一个参数\n")
++                return 2
++            handoff = argv[index]
+         elif item == "--workdir":
+             index += 1
+             if index >= len(argv):
+@@ -628,18 +1112,28 @@ def main(argv):
+                 return 2
+         elif item.startswith("--"):
+             sys.stderr.write("unknown option: " + item + "\n")
+-            sys.stderr.write("usage: check_review_report.py [--strict] [--replay] "
+-                             "[--workdir DIR] [--timeout SEC] <report.md>\n")
++            sys.stderr.write("usage: " + USAGE + "\n")
+             return 2
+         else:
+             args.append(item)
+         index += 1
+ 
++    if pre_fix and replay:
++        sys.stderr.write("--pre-fix 与 --replay 互斥：前者验「修复前必须失败」，"
++                         "后者验「修复后能重现」，请在改动前后各跑一次\n")
++        return 2
++
++    # Mode C needs round one's findings to attack; without the handoff the
++    # second reviewer would have nothing to falsify and would just re-review.
++    if falsify and handoff is None:
++        sys.stderr.write("--falsify 必须同时给出 --handoff：对抗性复审的对象是"
++                         "「上一轮报告」，没有交接文档就无从下手\n")
++        return 2
++
+     if len(args) != 1:
+-        sys.stderr.write("usage: check_review_report.py [--strict] [--replay] "
+-                         "[--workdir DIR] [--timeout SEC] <report.md>\n")
++        sys.stderr.write("usage: " + USAGE + "\n")
+         return 2
+-    return run(args[0], strict, replay, workdir, timeout)
++    return run(args[0], strict, replay, workdir, timeout, pre_fix, handoff, falsify)
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/fresh-eyes-review/scripts/test_check_review_report.py b/fresh-eyes-review/scripts/test_check_review_report.py
+index 8b9086a..8af459b 100644
+--- a/fresh-eyes-review/scripts/test_check_review_report.py
++++ b/fresh-eyes-review/scripts/test_check_review_report.py
+@@ -18,6 +18,7 @@ is wrong, not the test. Add a new rule to the gate? Add a case here that goes re
+ first.
+ """
+ 
++import base64
+ import os
+ import shutil
+ import subprocess
+@@ -59,6 +60,102 @@ REPLAY_OK = """### F1 备份清理会误删导出目录 · 严重度：高
+ EV_OK = b"[exit code: 0]\ncleaned=0 kept=1\n"
+ 
+ 
++# 位置校验夹具：报告引用 location，可选地造出 stub 文件。
++# red=True 时带一条合规的「反向前置」，好让这些用例只暴露位置校验的提醒，
++# 不被「缺少反向前置」那条提醒干扰（后者另有专门用例）。这条前置命令不引用
++# stub 文件 —— 否则位置校验会把它的提醒也算进来，掩盖这些用例要验的东西。
++REAL_PY = b"x = 1\ny = 2\n"
++
++
++def location_report(location, stubs, red=True):
++    lines = [
++        "### F1 幻觉定位用例 · 严重度：高",
++        "- 位置：" + location,
++        "- 复现：echo checked=1",
++        "- 实测：checked=1",
++    ]
++    if red:
++        lines.append("- 反向前置：python -c \"import sys;sys.exit(1)\"")
++        lines.append("- 反向前置证据：ev/R1.txt")
++    lines.append("- 影响：误判")
++    files = {"report.md": ("\n".join(lines) + "\n").encode("utf-8")}
++    if red:
++        files["ev/R1.txt"] = b"[exit code: 1]\nfail\n"
++    for stub in stubs:
++        files[stub] = REAL_PY
++    return files
++
++
++HANDOFF_OK = """# 审查交接文档
++
++## 范围
++- 工作目录：`C:\\work\\repo`
++- 改动范围：`git diff` 的 6 个文件
++- 验收标准：既有回归全绿；不引入对合法报告的误报
++
++## 已定取舍
++- 归一化只折叠十类已知易变 token | 依据：HumanDecision：真人明确要求先保守，假失败率量出来再放宽 | 影响边界：未被识别的易变内容会产生假不一致，会被升级给人
++- 报告只支持 Markdown 一种输入 | 依据：RecordedDecision：issue #1 里确认 | 影响边界：无法解析 JSON 报告
++
++## 已驳回的发现
++- F3「位置校验会误杀 `notes.txt`」| 驳回理由：非代码后缀本就不参与校验，这是有意的
++"""
++
++HANDOFF_NO_PROVENANCE = """# 审查交接文档
++
++## 范围
++- 工作目录：`C:\\work\\repo`
++
++## 已定取舍
++- 归一化只折叠十类已知易变 token | 影响边界：未被识别的易变内容会产生假不一致
++"""
++
++FALSIFY_OK = """### 对抗性复审 · 目标：2026-09-16 报告（11 条）
++
++## 我确认成立的
++- F1 `--strict` 不计数反向前置提醒 · 严重度：高
++- F4 位置解析丢弃盘符 · 严重度：中
++
++## 我驳倒的（上轮报错了）
++- F7 报告说「新断言有 3 条空转」，经复核定向破坏后确实变红，该结论不成立 · 严重度：低
++
++## 未决
++- F9 涉及 CI 行为，本地无法验证
++"""
++
++FALSIFY_NO_HEADINGS = """### 对抗性复审 · 目标：2026-09-16 报告
++
++- F1 `--strict` 不计数反向前置提醒 · 严重度：高
++"""
++
++
++def handoff_files(body, report_files=None):
++    files = {".review-handoff.md": body.encode("utf-8")}
++    if report_files:
++        files.update(report_files)
++    return files
++
++
++def good_report_files():
++    """一份完全合规的报告，供模式 C 的用例兜底。
++
++    必须是「零提醒」的：否则 --strict 会因为报告自身的位置/反向前置提醒变红，
++    把用例要验的交接文档规则掩盖过去。
++    """
++    return {
++        "report.md": ("### F1 模式 C 兜底报告 · 严重度：高\n"
++                      "- 位置：src/real.py:1\n"
++                      "- 复现：python -c \"print('checked=1')\"\n"
++                      "- 证据文件：ev/F1.txt\n"
++                      "- 反向前置：python -c \"import sys;sys.exit(1)\"\n"
++                      "- 反向前置证据：ev/R1.txt\n"
++                      "- 实测：见证据文件\n").encode("utf-8"),
++        "src/real.py": b"x = 1\n",
++        "ev/F1.txt": b"[exit code: 0]\nchecked=1\n",
++        "ev/R1.txt": b"[exit code: 1]\nfail\n",
++    }
++
++
+ def replay_report(command, evidence_path="ev/F1.txt", observed="见证据文件"):
+     return (
+         "### F1 重放用例 · 严重度：高\n"
+@@ -70,6 +167,38 @@ def replay_report(command, evidence_path="ev/F1.txt", observed="见证据文件"
+     ).encode("utf-8")
+ 
+ 
++def red_report(red, evidence_path="ev/R1.txt", repro=None, repro_evidence="ev/F1R.txt",
++               location="src/backup.py:1", stubs=("src/backup.py",)):
++    """Report fixture for the pre-fix contract. red=None omits the field.
++
++    `repro` defaults to a command whose output matches `repro_evidence`,
++    so the --replay half of a case is self-consistent by construction. The
++    location is deliberately real (a stub file is emitted) and carries a line
++    number, so these cases expose *only* the pre-fix rules -- otherwise a red
++    case could go red on the location warning and pass for the wrong reason.
++    """
++    if repro is None:
++        repro = "python -c \"import sys;sys.exit(0)\""
++    lines = [
++        "### F1 反向前置用例 · 严重度：高",
++        "- 位置：" + location,
++        "- 复现：" + repro,
++        "- 证据文件：" + repro_evidence,
++        "- 实测：见证据文件",
++    ]
++    files = {}
++    if red is not None:
++        lines.append("- 反向前置：" + red)
++        lines.append("- 反向前置证据：" + evidence_path)
++    lines.append("- 影响：误删")
++    files["report.md"] = ("\n".join(lines) + "\n").encode("utf-8")
++    if red is not None:
++        files[evidence_path] = b"[exit code: 1]\nfail\n"
++    for stub in stubs:
++        files[stub] = b"x = 1\n"
++    return files
++
++
+ CASES = [
+     # --- 基础格式 ---------------------------------------------------------
+     ("good", {"report.md": GOOD.encode("utf-8")}, [], 0,
+@@ -215,6 +344,154 @@ CASES = [
+     ("replay_none_declared", {"report.md": "未发现问题\n".encode("utf-8")},
+      ["--replay"], 0, "声明未发现问题时重放档也应通过"),
+ 
++    # --- 位置可核实性（幻觉定位） --------------------------------------------
++    # 一条发现可以在「命令能跑、重放一致」的同时，把位置指向一个根本不存在的
++    # 文件与行号。这是唯一能纯机械判定的语义缺口，所以不该只靠人看。位置校验
++    # 是提醒（--strict 下计为不合格），因为报告可以合法引用 --workdir 之外的路径。
++    ("location_missing_file",
++     location_report("src/ghost.py:12", ["src/real.py"]),
++     [], 0, "默认档下位置文件不存在只是提醒，不改变退出码"),
++    ("location_missing_file_strict",
++     location_report("src/ghost.py:12", ["src/real.py"]),
++     ["--strict"], 1, "--strict 下幻想出来的位置必须被拦"),
++    ("location_line_out_of_range",
++     location_report("src/real.py:9999", ["src/real.py"]),
++     ["--strict"], 1, "行号超出文件总行数必须被拦"),
++    ("location_line_in_range",
++     location_report("src/real.py:2", ["src/real.py"]),
++     ["--strict"], 0, "位置真实且行号在范围内时 --strict 也应通过"),
++    ("location_no_slash_code_file",
++     location_report("real.py:1", ["real.py"]),
++     ["--strict"], 0, "不带目录的代码文件名也要能解析（相对 workdir 解析）"),
++    ("location_non_code_extension",
++     location_report("notes.txt:3", []),
++     ["--strict"], 0, "非代码后缀不参与位置校验，避免误伤文档类审查"),
++    # 位置解析的三个真实缺陷（独立审查发现并复现过）：
++    # 1) 盘符被当成路径内容 -> 绝对路径被误判不存在
++    # 2) 含空格路径被截断 -> 真实文件被误判不存在
++    # 3) 只看第一个匹配 -> 前置一个非代码后缀即可整体绕过校验
++    ("location_with_spaces",
++     location_report("src/my dir/a b.py:1", ["src/my dir/a b.py"]),
++     ["--strict"], 0, "含空格的路径必须能正确解析（截断会误杀真实文件）"),
++    ("location_non_code_first_bypass",
++     location_report("notes.txt:3 src/ghost.py:1", ["src/real.py"]),
++     ["--strict"], 1, "非代码后缀写在前面时，后面的代码路径仍须被校验"),
++    ("location_multi_file_any_resolves",
++     location_report("notes.txt:3 src/real.py:1", ["src/real.py"]),
++     ["--strict"], 0, "多文件位置中任一个真实存在即算位置成立"),
++    ("location_url_is_not_a_path",
++     location_report("见 https://example.com/x/a.py:5", []),
++     ["--strict"], 0, "URL 不是被指控的文件，不应报「文件不存在」"),
++
++    # --- 反向前置（修复前必须失败） ------------------------------------------
++    # 这是堵住「恒真命令当实测」「命令与发现无关」的机械办法：一条声称有缺陷的
++    # 发现，必须给出一个「在有缺陷的代码上会失败」的命令，且退出码非零。
++    # 证据文件记的是 0，就说明命令通过了 —— 缺陷不成立。
++    ("red_exit_zero",
++     dict(red_report('python -c "print(1)"', repro='python -c "print(\'checked=1\')"'), **{"ev/F1R.txt": b"[exit code: 0]\nchecked=1\n", "ev/R1.txt": base64.b64decode("W2V4aXQgY29kZTogMF0Kb2sK")}),
++     [], 1, "反向前置证据是 exit 0：命令在缺陷代码上通过了，缺陷不成立"),
++    ("red_exit_nonzero",
++     dict(red_report('python -c "import sys;sys.exit(1)"', repro='python -c "print(\'checked=1\')"'), **{"ev/F1R.txt": b"[exit code: 0]\nchecked=1\n", "ev/R1.txt": base64.b64decode("W2V4aXQgY29kZTogMV0KQXNzZXJ0aW9uRXJyb3I6IGV4cGVjdGVkIDQyLCBnb3QgNDEK")}),
++     [], 0, "反向前置证据是失败的退出码：缺陷被观察到失败，通过"),
++    ("red_missing_evidence",
++     red_report('python -c "import sys;sys.exit(1)"', repro='python -c "print(\'checked=1\')"', evidence_path="ev/nope.txt"),
++     ["--strict"], 1, "有反向前置命令但没有落盘证据，--strict 下不合格"),
++    ("red_absent_strict",
++     dict(red_report(None, repro='python -c "print(\'checked=1\')"'),
++          **{"ev/F1R.txt": b"[exit code: 0]\nchecked=1\n"}),
++     ["--strict"], 1, "完全没有反向前置字段，--strict 下必须因这条提醒判不合格"),
++    ("red_absent_default",
++     dict(red_report(None, repro='python -c "print(\'checked=1\')"'),
++          **{"ev/F1R.txt": b"[exit code: 0]\nchecked=1\n"}),
++     [], 0, "默认档下缺少反向前置只是提醒，不改变退出码"),
++    ("red_warning_counted_under_strict",
++     dict(red_report(None, repro='python -c "print(\'checked=1\')"'),
++          **{"ev/F1R.txt": b"[exit code: 0]\nchecked=1\n"}),
++     ["--strict"], 1,
++     "位置合法、无其他问题，唯缺反向前置时 --strict 仍须拦住（锁死提醒计数 bug）"),
++    ("red_cannot_run",
++     red_report("未能执行：这个缺陷只能靠读代码看出来", repro='python -c "print(\'checked=1\')"'),
++     [], 1, "反向前置不接受「未能执行」——这一行必须是能跑的命令"),
++    ("red_pre_fix_reproduces",
++     dict(red_report('python -c "import sys;sys.exit(3)"', repro='python -c "print(\'checked=1\')"'), **{"ev/F1R.txt": b"[exit code: 0]\nchecked=1\n", "ev/R1.txt": base64.b64decode("W2V4aXQgY29kZTogM10KZmFpbGVkCg==")}),
++     ["--pre-fix"], 0, "--pre-fix 档：命令现在仍然失败，缺陷被复现，通过"),
++    ("red_pre_fix_already_green",
++     dict(red_report('python -c "print(2)"', repro='python -c "print(\'checked=1\')"'),
++          **{"ev/F1R.txt": b"[exit code: 0]\nchecked=1\n", "ev/R1.txt": base64.b64decode("W2V4aXQgY29kZTogMV0Kc3RhbGUgZmFpbHVyZSBmcm9tIGJlZm9yZSB0aGUgZml4Cg==")}),
++     ["--pre-fix"], 1, "--pre-fix 档：命令这次通过了，缺陷无法复现，必须拦下"),
++    ("red_pre_fix_no_red",
++     red_report(None, repro='python -c "print(\'checked=1\')"'),
++     ["--pre-fix"], 1, "--pre-fix 档下没有反向前置就无从核实缺陷是否存在"),
++    ("red_replay_conflict",
++     dict(red_report('python -c "import sys;sys.exit(1)"', repro='python -c "print(\'checked=1\')"'), **{"ev/F1R.txt": b"[exit code: 0]\nchecked=1\n", "ev/R1.txt": base64.b64decode("W2V4aXQgY29kZTogMV0KYm9vbQo=")}),
++     ["--pre-fix", "--replay"], 2, "--pre-fix 与 --replay 互斥，用法错误退 2"),
++    ("red_refused_command",
++     dict(red_report("rm -rf build/ --dry-run", repro='python -c "print(\'checked=1\')"'),
++          **{"ev/F1R.txt": b"[exit code: 0]\nchecked=1\n", "ev/R1.txt": base64.b64decode("W2V4aXQgY29kZTogMV0KYm9vbQo=")}),
++     ["--pre-fix"], 1, "反向前置的命令同样受拒绝表约束，不得执行"),
++
++    # --- 先红后绿的「绿半边」--------------------------------------------------
++    # --replay 除比对复现证据外，还重跑反向前置命令并要求它**已经通过**。它抓的是
++    # 「修完之后前置命令仍然失败」——修复没完成，或前置命令与那条缺陷无关。
++    ("replay_red_still_failing",
++     dict(red_report('python -c "import sys;sys.exit(1)"', repro='python -c "print(\'checked=1\')"'), **{"ev/F1R.txt": b"[exit code: 0]\nchecked=1\n", "ev/R1.txt": base64.b64decode("W2V4aXQgY29kZTogMV0KYm9vbQo=")}),
++     ["--replay"], 1, "--replay 档：修完之后反向前置仍然失败，说明修复没完成或前置命令无关"),
++    ("replay_red_now_green",
++     dict(red_report('python -c "print(2)"', repro='python -c "print(\'checked=1\')"'), **{"ev/F1R.txt": b"[exit code: 0]\nchecked=1\n", "ev/R1.txt": base64.b64decode("W2V4aXQgY29kZTogMV0KYm9vbQo=")}),
++     ["--replay"], 0, "--replay 档：复现一致且前置命令已转绿，先红后绿成立"),
++    ("replay_without_red",
++     dict(location_report("src/real.py:1", ["src/real.py"], red=False),
++          **{"ev/F1.txt": b"[exit code: 0]\n"}),
++     ["--replay", "--strict"], 1,
++     "没有反向前置时 --replay 只验了绿半边，--strict 下必须提示补前置命令"),
++
++    # --- 交接文档与对抗性复审（模式 C） ---------------------------------------
++    # 交接文档是「执行者写给审查者的有限情报」：已定取舍必须带出处，否则
++    # 执行者可以拿它自由封口，这套门禁的信誉就没了。无出处只提醒。
++    ("handoff_ok",
++     handoff_files(HANDOFF_OK, good_report_files()),
++     ["--strict", "--handoff", ".review-handoff.md"], 0,
++     "取舍带出处、字段齐全时 --strict 也应通过"),
++    ("handoff_missing_provenance",
++     handoff_files(HANDOFF_NO_PROVENANCE, good_report_files()),
++     ["--strict", "--handoff", ".review-handoff.md"], 1,
++     "取舍条目缺出处（HumanDecision/RecordedDecision/OrchestratorClaim）时 --strict 必须拦"),
++    ("handoff_missing_provenance_default",
++     handoff_files(HANDOFF_NO_PROVENANCE, good_report_files()),
++     ["--handoff", ".review-handoff.md"], 0,
++     "默认档下缺出处只是提醒，不改变退出码"),
++    ("handoff_no_tradeoffs",
++     handoff_files("# 审查交接文档\n\n## 范围\n- 工作目录：`C:\\\\work`\n\n"
++                   "## 已定取舍\n\n## 已驳回的发现\n",
++                   good_report_files()),
++     ["--strict", "--handoff", ".review-handoff.md"], 1,
++     "「已定取舍」小节为空时必须拦下，否则它只是一句「别管」"),
++    ("handoff_file_missing",
++     good_report_files(),
++     ["--handoff", ".review-handoff.md"], 2,
++     "指定的交接文档不存在属用法错误，退 2"),
++    ("falsify_ok",
++     {".review-handoff.md": HANDOFF_OK.encode("utf-8"),
++      "report.md": FALSIFY_OK.encode("utf-8")},
++     ["--falsify", "--handoff", ".review-handoff.md", "--strict"], 0,
++     "对抗性复审报告分段齐全、每条带判定后缀时通过"),
++    ("falsify_needs_handoff",
++     {".review-handoff.md": HANDOFF_OK.encode("utf-8"),
++      "report.md": FALSIFY_OK.encode("utf-8")},
++     ["--falsify", "report.md"], 2,
++     "--falsify 必须同时给出 --handoff（否则第二轮不知道第一轮是什么）"),
++    ("falsify_no_verdict_headings",
++     {".review-handoff.md": HANDOFF_OK.encode("utf-8"),
++      "report.md": FALSIFY_NO_HEADINGS.encode("utf-8")},
++     ["--falsify", "--handoff", ".review-handoff.md", "--strict"], 1,
++     "对抗性复审必须分「确认成立 / 驳倒 / 未决」，否则无法判断它做了什么"),
++    ("falsify_unmarked_claim",
++     {".review-handoff.md": HANDOFF_OK.encode("utf-8"),
++      "report.md": ("### 对抗性复审\n\n## 我确认成立的\n"
++                    "- F1 这个问题是成立的\n").encode("utf-8")},
++     ["--falsify", "--handoff", ".review-handoff.md", "--strict"], 1,
++     "每条判定必须带「· 严重度：」或「· 判定：」后缀，便于逐条核对"),
++
+     # --- 用法 ---------------------------------------------------------------
+     ("unknown_option", {"report.md": GOOD.encode("utf-8")}, ["--nope"], 2,
+      "未知选项退 2"),

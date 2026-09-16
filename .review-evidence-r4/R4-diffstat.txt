@@ -1,0 +1,18 @@
+[exit code: 0]
+== git diff --numstat (工作区 vs HEAD) ==
+63	10	README.md
+93	16	fresh-eyes-review/SKILL.md
+76	0	fresh-eyes-review/references/adversarial-reviewer-prompt.md
+15	5	fresh-eyes-review/references/anti-patterns.md
+78	0	fresh-eyes-review/references/handoff-template.md
+14	5	fresh-eyes-review/references/reviewer-prompt.md
+625	24	fresh-eyes-review/scripts/check_review_report.py
+375	2	fresh-eyes-review/scripts/test_check_review_report.py
+
+== git diff --shortstat ==
+ 8 files changed, 1339 insertions(+), 62 deletions(-)
+
+== 交接文档自报的数字 ==
+5: - 改动范围：未提交的工作区改动，基线提交 `593532b25d1b14cd85b73e7a4c65a27e23a76cbf`。8 个文件、+1127 / -57 行：
+6:   - `fresh-eyes-review/scripts/check_review_report.py`（+536，主要改动）
+7:   - `fresh-eyes-review/scripts/test_check_review_report.py`（+277）

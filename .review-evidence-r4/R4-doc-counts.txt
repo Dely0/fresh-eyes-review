@@ -1,0 +1,19 @@
+[exit code: 0]
+== grep 同上 in docs/scripts (excluding the gate itself) ==
+C:\Users\dupenglai\.dsh\tmp\fer-repo\fresh-eyes-review\references\adversarial-reviewer-prompt.md:23: - 改动范围：`<同上轮；或直接看 git diff>`
+C:\Users\dupenglai\.dsh\tmp\fer-repo\fresh-eyes-review\references\adversarial-reviewer-prompt.md:62: 2. **证据文件格式同上轮**：首行 `[exit code: N]`，其后原始输出，不改写、不节选。
+
+== assertion-count claims in docs ==
+C:\Users\dupenglai\.dsh\tmp\fer-repo\README.md:85: - **它是本仓库里最不成熟的一块。** 整套门禁现在有 42 条断言钉着，其中 8 条专门覆盖 `--replay`（输出不一致、退出码不一致、命中拒绝表、超时、易变内容归一化……）；但真正的难点在断言之外——依赖版本、并发顺序、环境差异造成的"重放不上"，目前只能靠人判断。**而且「假失败率」这个数字目前是空的**：归一化只折叠十类已知易变 token，不在表里的易变内容会让重放判"不一致"。保守是故意的，但如果假失败比例太高，人就会干脆不用 `--replay`。这个数字没有被量过之前，不要声称这一档已经"可用"。
+C:\Users\dupenglai\.dsh\tmp\fer-repo\fresh-eyes-review\SKILL.md:222: 门禁的回归套件：**70 条断言**，覆盖这条流水线上真实踩过的坑（末条发现被尾部小节补齐、散文报告靠"无问题"子串蒙混、GBK/UTF-16 误杀、加粗标签被误判、多行证据被判为空、填充词当证据、`未能执行` 的原因阈值、悬空证据文件、证据文件缺退出码首行、**位置指向不存在的文件、位置行号超出范围、含空格路径、非代码后缀写在前面导致的整体绕过、URL 不被当成文件、无目录的代码文件名**、**反向前置证据记成 0、缺反向前置证据、缺反向前置字段、反向前置写「未能执行」、`--pre-fix` 下缺陷复现不了、`--pre-fix` 与 `--replay` 互斥、反向前置命令同样受拒绝表约束、`--replay` 下前置命令必须已转绿**、**交接文档缺出处 / 缺取舍条目 / 文件不存在、`--falsify` 缺三段 / 缺判定标注 / 必须配 `--handoff`**、重放不一致/退出码不一致/命中拒绝表/超时、易变内容归一化……）。夹具现造，不依赖任何外部文件。
+
+== handoff numbers ==
+C:\Users\dupenglai\.dsh\tmp\fer-repo\.review-handoff.md:5: - 改动范围：未提交的工作区改动，基线提交 `593532b25d1b14cd85b73e7a4c65a27e23a76cbf`。8 个文件、+1127 / -57 行：
+C:\Users\dupenglai\.dsh\tmp\fer-repo\.review-handoff.md:6:   - `fresh-eyes-review/scripts/check_review_report.py`（+536，主要改动）
+C:\Users\dupenglai\.dsh\tmp\fer-repo\.review-handoff.md:16:   5. 既有行为不发生回归：改动前的 **36 条**断言（基线提交实测）全部保持通过，新增后合计 79 条全绿。
+C:\Users\dupenglai\.dsh\tmp\fer-repo\.review-handoff.md:24:   - 回归套件：`python fresh-eyes-review/scripts/test_check_review_report.py`（期望 exit 0，输出「共 70 条断言，变红 0 条」）
+C:\Users\dupenglai\.dsh\tmp\fer-repo\.review-handoff.md:44: - 已修：F1（必需小节改为逐一判定）、F2（出处必须在「依据：」后且非否定）、F5（三段各自必须点名发现编号）、F6（`--falsify` 与 `--pre-fix`/`--replay` 同给退 2）、F8（交接文档基准数改为实测 36）、F9（`extract_path` / `extract_command` 支持 inline code + 注解；`red_evidence` 那处漏改已补）
+C:\Users\dupenglai\.dsh\tmp\fer-repo\.review-handoff.md:45: - 未修 / 存疑：F3 的一半（真人是否拍板，不可机械核验）、F4 的部分（已按它的建议修 `falsify_needs_handoff` 夹具并补逐条断言，并自跑定向变异复核）
+
+== CASES entries in the suite ==
+CASES tuple entries: 81

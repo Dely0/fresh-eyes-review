@@ -1,0 +1,7 @@
+[exit code: 0]
+old case names  = 34
+new case names  = 81
+old names missing from the new suite = []
+new case names = ['location_missing_file', 'location_missing_file_strict', 'location_line_out_of_range', 'location_line_in_range', 'location_no_slash_code_file', 'location_non_code_extension', 'location_with_spaces', 'location_non_code_first_bypass', 'location_multi_file_any_resolves', 'location_url_is_not_a_path', 'red_exit_zero', 'red_exit_nonzero', 'red_missing_evidence', 'red_absent_strict', 'red_absent_default', 'red_warning_counted_under_strict', 'red_cannot_run', 'red_pre_fix_reproduces', 'red_pre_fix_already_green', 'red_pre_fix_no_red', 'red_replay_conflict', 'red_refused_command', 'replay_red_still_failing', 'replay_red_now_green', 'replay_without_red', 'handoff_ok', 'handoff_missing_provenance', 'handoff_missing_provenance_default', 'handoff_no_tradeoffs', 'handoff_missing_tradeoffs_section', 'handoff_missing_scope_section', 'handoff_negated_provenance', 'handoff_provenance_needs_basis_label', 'handoff_ok_still_passes', 'falsify_vacuous_report', 'falsify_requires_handoff_flag', 'falsify_ignores_replay', 'falsify_ignores_pre_fix', 'evidence_path_with_annotation', 'handoff_file_missing', 'falsify_ok', 'falsify_no_verdict_headings', 'falsify_missing_undecided_section', 'falsify_section_without_finding_ref', 'red_command_too_short', 'red_same_as_repro', 'falsify_unmarked_claim']
+(suite total assertions = cases + 2 hand-written = 83)
+

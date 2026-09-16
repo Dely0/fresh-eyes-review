@@ -5,6 +5,7 @@ __pycache__/
 
 # Per-run review artifacts (evidence files, reviewer scratch space)
 .review-evidence/
+.review-handoff.md
 .tmp-review/
 
 # Editor / OS noise

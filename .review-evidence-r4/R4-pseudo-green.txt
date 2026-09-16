@@ -1,0 +1,60 @@
+[exit code: 0]
+夹具 A = 套件里 falsify_unmarked_claim 的原文（只有「我确认成立的」一节）
+
+### A_original_gate
+$ python <gate> --falsify --handoff .review-handoff.md --strict <report.md>
+gate exit = 1
+--- stdout ---
+[FAIL] 对抗性复审：对抗性复审报告缺少小节：「## 我驳倒的」（说不清哪些确认、哪些驳倒，就无法判断它做了什么）
+[FAIL] 对抗性复审：对抗性复审报告缺少小节：「## 未决」（说不清哪些确认、哪些驳倒，就无法判断它做了什么）
+--- stderr ---
+--- end ---
+
+### A_M3_gate
+$ python <gate> --falsify --handoff .review-handoff.md --strict <report.md>
+gate exit = 1
+--- stdout ---
+[FAIL] 对抗性复审：对抗性复审报告缺少小节：「## 我驳倒的」（说不清哪些确认、哪些驳倒，就无法判断它做了什么）
+[FAIL] 对抗性复审：对抗性复审报告缺少小节：「## 未决」（说不清哪些确认、哪些驳倒，就无法判断它做了什么）
+--- stderr ---
+--- end ---
+
+A 两次运行输出相同吗（除 gate 路径外）：True
+=> 这条断言判红的原因与小节缺失有关，与「判定标注」规则无关；
+   把标注规则整条删掉（M3），它照样红，所以套件在 M3 下全绿。
+
+
+夹具 B = 三段齐全、只有一条判定条目缺标注（这才是标注规则真正的靶子）
+
+### B_all_sections_gate
+$ python <gate> --falsify --handoff .review-handoff.md --strict <report.md>
+gate exit = 1
+--- stdout ---
+[WARN] 对抗性复审：判定条目没有标注（「· 严重度：」或「· 判定：」）：- F1 这个问题是成立的
+--strict：对抗性复审/交接文档还有 1 条提醒未清，本次按不合格处理。
+--- stderr ---
+--- end ---
+
+### B_all_sections_M3_gate
+$ python <gate> --falsify --handoff .review-handoff.md --strict <report.md>
+gate exit = 0
+--- stdout ---
+对抗性复审通过 —— 分段齐全，每条判定都标了出处。
+--- stderr ---
+--- end ---
+
+B 两次运行的退出码：原文 1 / M3 0
+=> 套件里没有任何用例使用 B 这种夹具（三段齐全、缺标注）。
+
+
+夹具 C = 同 B，但用默认档（不带 --strict）
+
+### C_all_sections_default
+$ python <gate> --falsify --handoff .review-handoff.md <report.md>
+gate exit = 0
+--- stdout ---
+[WARN] 对抗性复审：判定条目没有标注（「· 严重度：」或「· 判定：」）：- F1 这个问题是成立的
+对抗性复审通过 —— 分段齐全，每条判定都标了出处。
+--- stderr ---
+--- end ---
+

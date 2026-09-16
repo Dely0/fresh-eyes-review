@@ -1,0 +1,46 @@
+[exit code: 0]
+temp root: C:\Users\dupenglai\.dsh\tmp\fer-mut-r4-v_xytke5
+
+=== M1 falsify no longer requires --handoff -> exit 1
+    �� 83 �����ԣ���� 1 ����
+    [ RED ] falsify_requires_handoff_flag  ���� exit=2��ʵ�� exit=0
+
+=== M2 falsify missing-section check deleted -> exit 0
+    �� 83 �����ԣ���� 0 ����
+    (no RED case -- the rule is NOT pinned)
+
+=== M3 falsify verdict-marker check deleted -> exit 0
+    �� 83 �����ԣ���� 0 ����
+    (no RED case -- the rule is NOT pinned)
+
+=== M4 'undecided' dropped from required falsify sections -> exit 1
+    �� 83 �����ԣ���� 1 ����
+    [ RED ] falsify_missing_undecided_section  ���� exit=1��ʵ�� exit=0
+
+=== M5 falsify finding-ref check deleted -> exit 1
+    �� 83 �����ԣ���� 2 ����
+    [ RED ] falsify_vacuous_report  ���� exit=1��ʵ�� exit=0
+    [ RED ] falsify_section_without_finding_ref  ���� exit=1��ʵ�� exit=0
+
+=== M6 handoff required-section check deleted -> exit 1
+    �� 83 �����ԣ���� 1 ����
+    [ RED ] handoff_missing_scope_section  ���� exit=1��ʵ�� exit=0
+
+=== M7 handoff provenance check deleted -> exit 1
+    �� 83 �����ԣ���� 3 ����
+    [ RED ] handoff_missing_provenance  ���� exit=1��ʵ�� exit=0
+    [ RED ] handoff_negated_provenance  ���� exit=1��ʵ�� exit=0
+    [ RED ] handoff_provenance_needs_basis_label  ���� exit=1��ʵ�� exit=0
+
+=== M8 red-too-short threshold 8 -> 1 -> exit 1
+    �� 83 �����ԣ���� 1 ����
+    [ RED ] red_command_too_short  ���� exit=1��ʵ�� exit=0
+
+=== M9 resolve_red removed (red 'same as above' no longer resolved) -> exit 1
+    �� 83 �����ԣ���� 1 ����
+    [ RED ] red_same_as_repro  ���� exit=0��ʵ�� exit=1
+
+=== M10 falsify requires --handoff: message text changed (stderr pin) -> exit 1
+    �� 83 �����ԣ���� 1 ����
+    [ RED ] falsify_requires_handoff_flag  ���� exit=2��ʵ�� exit=2
+

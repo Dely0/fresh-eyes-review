@@ -1,0 +1,13 @@
+[exit code: 0]
+len(NORMALIZERS) = 10
+   1 \d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{
+   2 \b\d{4}-\d{2}-\d{2}\b
+   3 \b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b
+   4 \b\d+(?:\.\d+)?[ \t]*(?:ms|us|\u00b5s|ns|secs|seconds|sec|mi
+   5 \b\d+(?:\.\d+)?[ \t]*s\b
+   6 \b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4
+   7 \b0x[0-9a-fA-F]{6,}\b
+   8 \bpid[=: \t]+\d+\b
+   9 \b[A-Za-z]:\\[^\s\"']*(?:Temp|tmp)[^\s\"']*
+   10 (?<![A-Za-z0-9])/tmp/[^\s\"']+
+

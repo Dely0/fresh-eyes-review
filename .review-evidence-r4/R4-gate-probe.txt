@@ -1,0 +1,164 @@
+[exit code: 0]
+fixture root: C:\Users\dupenglai\.dsh\tmp\fer-probe-r4-65eoe177
+(子进程带 PYTHONUTF8=1，编码问题见 R4-stderr-encoding.txt)
+
+### F1_handoff_only_tradeoffs  -- F1 修复后：缺 ## 范围 应退 1
+$ python check_review_report.py --strict --handoff .review-handoff.md <report.md>
+gate exit = 1
+--- stdout ---
+[FAIL] 交接文档：交接文档缺少必需小节：「## 范围」
+交接文档不合格 —— 它是审查者的简报，必须能被机器读懂：范围为谁、取舍谁的、边界在哪。
+--- stderr ---
+--- end ---
+
+### F1_handoff_scope_inside_fence  -- F1 残余：## 范围 只出现在围栏示例里，是否仍算「必需小节在」
+$ python check_review_report.py --strict --handoff .review-handoff.md <report.md>
+gate exit = 0
+--- stdout ---
+[ OK ] F1 F1 模式 C 兜底报告 · 严重度：高
+
+共 1 条发现：1 条合格，0 条不合格，另有 0 条提醒。
+格式达标 —— 这只说明每条都写了位置/复现/证据，不代表内容为真：要验真实性请用 --replay，或自己逐条照抄命令。
+--- stderr ---
+--- end ---
+
+### F2_negated_provenance  -- F2 修复后：「依据：未经 HumanDecision 确认」应退 1
+$ python check_review_report.py --strict --handoff .review-handoff.md <report.md>
+gate exit = 1
+--- stdout ---
+[WARN] 交接文档：取舍条目没有可辨认的出处（要求「依据：」后紧接 HumanDecision / RecordedDecision / OrchestratorClaim）：- 不要报假不一致 | 依据：未经 HumanDecision 确认，是本轮执行者自行决定 | 
+[ OK ] F1 F1 模式 C 兜底报告 · 严重度：高
+
+共 1 条发现：1 条合格，0 条不合格，另有 1 条提醒。
+--strict：还有 1 条提醒未清，本次按不合格处理。
+--- stderr ---
+--- end ---
+
+### F3_orchestrator_claim  -- F3：自称 OrchestratorClaim 的取舍条目
+$ python check_review_report.py --strict --handoff .review-handoff.md <report.md>
+gate exit = 0
+--- stdout ---
+[ OK ] F1 F1 模式 C 兜底报告 · 严重度：高
+
+共 1 条发现：1 条合格，0 条不合格，另有 0 条提醒。
+格式达标 —— 这只说明每条都写了位置/复现/证据，不代表内容为真：要验真实性请用 --replay，或自己逐条照抄命令。
+--- stderr ---
+--- end ---
+
+### F3_human_decision  -- F3：同一条取舍改称 HumanDecision
+$ python check_review_report.py --strict --handoff .review-handoff.md <report.md>
+gate exit = 0
+--- stdout ---
+[ OK ] F1 F1 模式 C 兜底报告 · 严重度：高
+
+共 1 条发现：1 条合格，0 条不合格，另有 0 条提醒。
+格式达标 —— 这只说明每条都写了位置/复现/证据，不代表内容为真：要验真实性请用 --replay，或自己逐条照抄命令。
+--- stderr ---
+--- end ---
+
+### F5_vacuous_report  -- F5 修复后：空洞报告应退 1
+$ python check_review_report.py --falsify --handoff .review-handoff.md --strict <report.md>
+gate exit = 1
+--- stdout ---
+[FAIL] 对抗性复审：「## 我确认成立的」没有点名任何一条上一轮发现 —— 判决必须落到具体条目上（例如 F1、F3）
+[FAIL] 对抗性复审：「## 我驳倒的」没有点名任何一条上一轮发现 —— 判决必须落到具体条目上（例如 F1、F3）
+[FAIL] 对抗性复审：「## 未决」没有点名任何一条上一轮发现 —— 判决必须落到具体条目上（例如 F1、F3）
+--- stderr ---
+--- end ---
+
+### F5_no_verdict_markers_default  -- F5 残余：默认档下判定标注缺失，成功话术是否仍然出现
+$ python check_review_report.py --falsify --handoff .review-handoff.md <report.md>
+gate exit = 0
+--- stdout ---
+[WARN] 对抗性复审：判定条目没有标注（「· 严重度：」或「· 判定：」）：- F1 缓存淘汰多留一条
+[WARN] 对抗性复审：判定条目没有标注（「· 严重度：」或「· 判定：」）：- F2 上轮说日志会丢，实际是正常轮转
+对抗性复审通过 —— 分段齐全，每条判定都标了出处。
+--- stderr ---
+--- end ---
+
+### F5_cn_adjacent_finding_ref  -- F5 新问题：F1/F2 后面紧跟中文时 \bF\d+\b 是否仍然算「点名了发现」
+$ python check_review_report.py --falsify --handoff .review-handoff.md --strict <report.md>
+gate exit = 1
+--- stdout ---
+[FAIL] 对抗性复审：「## 我确认成立的」没有点名任何一条上一轮发现 —— 判决必须落到具体条目上（例如 F1、F3）
+[FAIL] 对抗性复审：「## 我驳倒的」没有点名任何一条上一轮发现 —— 判决必须落到具体条目上（例如 F1、F3）
+[FAIL] 对抗性复审：「## 未决」没有点名任何一条上一轮发现 —— 判决必须落到具体条目上（例如 F1、F3）
+--- stderr ---
+--- end ---
+
+### F6_falsify_plus_replay  -- F6 修复后：--falsify + --replay（顺序颠倒）应退 2
+$ python check_review_report.py --replay --falsify --handoff .review-handoff.md <report.md>
+gate exit = 2
+--- stdout ---
+--- stderr ---
+--falsify 与 --pre-fix / --replay 不能同时使用：模式 C 判的是「上一轮的报告」，不走发现块与证据重放；这两类校验请分别运行
+--- end ---
+
+### F6_falsify_plus_pre_fix  -- F6 修复后：--falsify + --pre-fix 应退 2
+$ python check_review_report.py --falsify --pre-fix --handoff .review-handoff.md <report.md>
+gate exit = 2
+--- stdout ---
+--- stderr ---
+--falsify 与 --pre-fix / --replay 不能同时使用：模式 C 判的是「上一轮的报告」，不走发现块与证据重放；这两类校验请分别运行
+--- end ---
+
+### F9_annotation_inline_code  -- F9 修复后：inline code + 注解应能解析
+$ python check_review_report.py --replay --strict <report.md>
+gate exit = 0
+--- stdout ---
+[OK/▶ ] F1 F1 带注解的证据路径 · 严重度：高
+       重放：输出与证据文件一致；反向前置命令修完之后已通过（先红后绿）
+
+共 1 条发现：1 条合格，0 条不合格，另有 0 条提醒。
+格式达标且全部重放一致 —— 每条都真的跑过，而且现在还能跑出同样的结果。
+--- stderr ---
+--- end ---
+
+### F9_bare_path_with_backticked_note  -- F9 修复的新问题：注解里的 inline code 被当成路径，合法报告是否被误杀
+$ python check_review_report.py  <report.md>
+gate exit = 1
+--- stdout ---
+[FAIL] F1 F1 裸路径 + 注解里有 inline code · 严重度：高
+       - 证据文件不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-probe-r4-65eoe177\\F9_bare_path_with_backticked_note\\probe.log'
+
+共 1 条发现：0 条合格，1 条不合格，另有 0 条提醒。
+不合格的条目必须退回补证据，或直接当噪声丢弃 —— 不要凭它改代码。
+--- stderr ---
+--- end ---
+
+### RED_same_as_repro_default_strict  -- 「同上」默认档：应退 0（这是本轮新增支持的目标场景）
+$ python check_review_report.py --strict <report.md>
+gate exit = 0
+--- stdout ---
+[ OK ] F1 F1 反向前置用例 · 严重度：高
+
+共 1 条发现：1 条合格，0 条不合格，另有 0 条提醒。
+格式达标 —— 这只说明每条都写了位置/复现/证据，不代表内容为真：要验真实性请用 --replay，或自己逐条照抄命令。
+--- stderr ---
+--- end ---
+
+### RED_same_as_repro_pre_fix  -- 「同上」在 --pre-fix 下：真正被执行的命令是什么
+$ python check_review_report.py --pre-fix <report.md>
+gate exit = 1
+--- stdout ---
+[FAIL] F1 F1 反向前置用例 · 严重度：高
+       - 前置重跑：NO-EVIDENCE 没有「反向前置」，无法核实缺陷是否真的被观察到失败
+
+共 1 条发现：0 条合格，1 条不合格，另有 0 条提醒。
+不合格的条目必须退回补证据，或直接当噪声丢弃 —— 不要凭它改代码。
+--- stderr ---
+--- end ---
+
+### RED_same_as_repro_replay  -- 「同上」在 --replay 下：合法发现是否被判「修完之后仍然失败」
+$ python check_review_report.py --replay <report.md>
+gate exit = 0
+--- stdout ---
+[OK/▶ ] F1 F1 反向前置用例 · 严重度：高
+       重放：输出与证据文件一致
+       ! 这条发现没有「反向前置」，所以只验了「修复后能重现」，没有验过「修复前确实失败」——先补前置命令，改之前用 --pre-fix 跑一次
+
+共 1 条发现：1 条合格，0 条不合格，另有 1 条提醒。
+格式达标且全部重放一致 —— 每条都真的跑过，而且现在还能跑出同样的结果。
+--- stderr ---
+--- end ---
+

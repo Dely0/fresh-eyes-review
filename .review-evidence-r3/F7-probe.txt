@@ -1,0 +1,6 @@
+[exit code: 1]
+marker=orchestrator -> gate exit 0
+marker=human -> gate exit 0
+两种出处标注在 --strict 下退出码相同且都通过 = True
+F7_PROVENANCE_MARKERS_INTERCHANGEABLE: 自认「编排者自己的主张」与自称「真人决定」在门禁下不可区分，诚实标注没有任何成本
+

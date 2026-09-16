@@ -1,0 +1,9 @@
+[exit code: 1]
+[ OK ] F1 F1 兜底 · 严重度：高
+
+共 1 条发现：1 条合格，0 条不合格，另有 0 条提醒。
+格式达标 —— 这只说明每条都写了位置/复现/证据，不代表内容为真：要验真实性请用 --replay，或自己逐条照抄命令。
+gate exit=0
+匹配行: - 不要报归一化产生的假不一致 | 依据：未经 HumanDecision 确认，是本轮执行者自行决定 | 影响边界：无
+F6_NEGATED_PROVENANCE_PASSES: 条目自称「未经 HumanDecision 确认」，--strict 下仍被判为有出处
+

@@ -1,0 +1,32 @@
+[exit code: 1]
+[FAIL] F1 F1 交接文档的「必需小节」判定是 OR 不是 AND：缺 `## 范围` 的交接文档在 `--strict` 下照样通过 · 严重度：高
+       - 证据文件不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F1-probe.txt'
+       - 反向前置证据不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F1-reverse.txt'
+[FAIL] F2 F2 取舍条目的「出处」是裸子串匹配，条目自称「未经 HumanDecision 确认」也被算作有出处 · 严重度：高
+       - 证据文件不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F6-probe.txt'
+       - 反向前置证据不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F6-reverse.txt'
+[FAIL] F3 F3 三种出处标记在门禁下完全等价：自称 `OrchestratorClaim` 与自称 `HumanDecision` 的退出码逐字节相同 · 严重度：中
+       - 证据文件不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F7-probe.txt'
+       - 反向前置证据不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F7-probe.txt'
+[FAIL] F4 F4 回归套件完全钉不住 `--falsify`：三条规则整条删掉，套件仍然「共 70 条断言，变红 0 条」 · 严重度：高
+       - 证据文件不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F3-probe.txt'
+       - 反向前置证据不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F3-reverse.txt'
+[FAIL] F5 F5 对抗性复审可以完全空洞：一句「逐条复核完毕」就能通过 `--strict`，而门禁打印「每条判定都标了出处」 · 严重度：高
+       - 证据文件不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F4-probe.txt'
+       - 反向前置证据不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F4-reverse.txt'
+[FAIL] F6 F6 `--falsify` 把 `--replay` / `--pre-fix` 静默吞掉：输出与纯 `--falsify` 逐字节相同 · 严重度：中
+       - 证据文件不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F5-probe.txt'
+       - 反向前置证据不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F5-reverse.txt'
+[FAIL] F7 F7 `--handoff` 缺出处的默认档行为（提醒而非不合格）在 README 的退出码表里被写成「不合格」 · 严重度：低
+       - 证据文件不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F7-doc-consistency.txt'
+       - 反向前置证据不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F7-doc-consistency.txt'
+[FAIL] F8 F8 交接文档的验收标准 5 与实际不符：仓库里从来没有「53 条断言」 · 严重度：中
+       - 证据文件不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F9-assertion-count.txt'
+       - 反向前置证据不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F9-assertion-count.txt'
+[FAIL] F9 F9 证据文件路径后面多一句括注就被判「证据文件不可用」：inline code 与注解并存时误杀合法报告 · 严重度：中
+       - 证据文件不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F10-probe.txt'
+       - 反向前置证据不可用：证据文件读不了：[Errno 2] No such file or directory: 'C:\\Users\\dupenglai\\.dsh\\tmp\\fer-repo\\.review-evidence-r3\\.review-evidence-r3/F10-probe.txt'
+
+共 9 条发现：0 条合格，9 条不合格，另有 0 条提醒。
+不合格的条目必须退回补证据，或直接当噪声丢弃 —— 不要凭它改代码。
+

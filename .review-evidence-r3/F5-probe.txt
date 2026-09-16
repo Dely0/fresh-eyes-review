@@ -1,0 +1,17 @@
+[exit code: 1]
+$ check_review_report.py --falsify --strict round2.md
+对抗性复审通过 —— 分段齐全，每条判定都标了出处。
+gate exit=0
+
+$ check_review_report.py --falsify --replay --strict round2.md
+对抗性复审通过 —— 分段齐全，每条判定都标了出处。
+gate exit=0
+
+$ check_review_report.py --falsify --pre-fix --strict round2.md
+对抗性复审通过 —— 分段齐全，每条判定都标了出处。
+gate exit=0
+
+HEAD 套件自报：共 36 条断言，变红 0 条。
+工作区套件自报：共 70 条断言，变红 0 条。
+F5_FALSIFY_IGNORES_REPLAY: --falsify --replay 与纯 --falsify 输出逐字节相同 = True；没有任何一行重放/前置输出
+
