@@ -149,6 +149,35 @@ if ($LASTEXITCODE -ne 0) {
 }
 Ok "scheduled task registered (every $IntervalMinutes minute(s))"
 
+# ---- 3b) the task must also run on battery -----------------------------------
+# schtasks defaults to DisallowStartIfOnBatteries = true, and that failure is
+# silent: on a laptop the task never starts, /run still reports SUCCESS, and the
+# status just sits at "Queued". Set both battery flags off by re-registering the
+# task from its own XML.
+Step 'clearing the battery-power restrictions (they would silently skip runs)'
+$taskXmlPath = Join-Path $env:TEMP 'fresh-eyes-review-task.xml'
+$prevPref = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    & schtasks.exe /query /tn $TaskName /xml ONE 2>$null | Set-Content -Path $taskXmlPath -Encoding Unicode
+    $xml = Get-Content -Path $taskXmlPath -Raw
+    $xml = $xml -replace '<DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>', '<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>'
+    $xml = $xml -replace '<StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>', '<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>'
+    Set-Content -Path $taskXmlPath -Value $xml -Encoding Unicode
+    & schtasks.exe /create /tn $TaskName /xml $taskXmlPath /f 2>&1 | Out-Null
+    $xmlExit = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $prevPref
+    if (Test-Path $taskXmlPath) { Remove-Item -Force $taskXmlPath }
+}
+if ($xmlExit -ne 0) {
+    Write-Output "[WARN] could not re-register the task from XML (exit $xmlExit); it may be skipped while on battery."
+}
+else {
+    Ok 'battery restrictions cleared (the task runs on battery too)'
+}
+
 # ---- 4) verify the task actually runs and logs -------------------------------
 $before = 0
 if (Test-Path $logFile) { $before = @(Get-Content $logFile -ErrorAction SilentlyContinue).Count }
